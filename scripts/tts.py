@@ -1,0 +1,125 @@
+#!/usr/bin/env python3
+"""
+tts.py — narration synthesis. Engine: ElevenLabs (primary) or Piper (fallback).
+
+Env:
+  ELEVEN_API_KEY   ElevenLabs key (if absent -> piper fallback)
+  ELEVEN_VOICE_ID  optional explicit voice id
+  ELEVEN_VOICE     voice name to search in "My Voices" (default: "alex")
+  ELEVEN_MODEL     default: eleven_flash_v2_5
+  TTS_ENGINE       force "eleven" or "piper"
+
+Usage: python3 scripts/tts.py content/current/script.json
+Output: work/audio/p_XXXX.(mp3|wav), work/narration.wav, work/timings.json
+"""
+import json, os, subprocess, sys, time, urllib.request
+
+BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PARA_PAUSE, SECT_PAUSE, SR = 0.55, 1.10, 44100
+API = "https://api.elevenlabs.io/v1"
+
+def ffdur(path):
+    r = subprocess.run(["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+                        "-of", "csv=p=0", path], capture_output=True, text=True)
+    return float(r.stdout.strip())
+
+def http(url, key, data=None, retries=4):
+    for i in range(retries):
+        try:
+            req = urllib.request.Request(url, headers={
+                "xi-api-key": key, "Content-Type": "application/json"},
+                data=json.dumps(data).encode() if data else None)
+            with urllib.request.urlopen(req, timeout=180) as r:
+                return r.read()
+        except Exception as e:
+            if i == retries - 1:
+                raise
+            print(f"[tts] retry {i+1}: {e}", flush=True)
+            time.sleep(5 * (i + 1))
+
+def pick_voice(key):
+    vid = os.environ.get("ELEVEN_VOICE_ID")
+    if vid:
+        return vid
+    want = os.environ.get("ELEVEN_VOICE", "alex").lower()
+    voices = json.loads(http(f"{API}/voices", key))["voices"]
+    for v in voices:
+        if want in v["name"].lower():
+            print(f"[tts] voice: {v['name']} ({v['voice_id']})")
+            return v["voice_id"]
+    raise SystemExit(f"[tts] voice '{want}' not found in My Voices. "
+                     f"Available: {[v['name'] for v in voices]}")
+
+def synth_eleven(text, out, key, voice_id):
+    body = {"text": text,
+            "model_id": os.environ.get("ELEVEN_MODEL", "eleven_flash_v2_5"),
+            "voice_settings": {"stability": 0.45, "similarity_boost": 0.75,
+                                "style": 0.35, "speed": 1.0}}
+    audio = http(f"{API}/text-to-speech/{voice_id}?output_format=mp3_44100_128",
+                 key, body)
+    with open(out, "wb") as f:
+        f.write(audio)
+
+def synth_piper(text, out):
+    voice = os.path.join(BASE, "assets", "voice", "en-us-ryan-high.onnx")
+    r = subprocess.run([sys.executable, "-m", "piper", "-m", voice, "-f", out,
+                        "--length-scale", "1.05", "--sentence-silence", "0.35"],
+                       input=text.encode(), capture_output=True, timeout=1800)
+    if r.returncode != 0:
+        raise RuntimeError(r.stderr.decode()[-400:])
+
+def main():
+    with open(sys.argv[1]) as f:
+        script = json.load(f)
+    key = os.environ.get("ELEVEN_API_KEY", "").strip()
+    engine = os.environ.get("TTS_ENGINE") or ("eleven" if key else "piper")
+    ext = "mp3" if engine == "eleven" else "wav"
+    voice_id = pick_voice(key) if engine == "eleven" else None
+    print(f"[tts] engine: {engine}")
+
+    audio_dir = os.path.join(BASE, "work", "audio")
+    os.makedirs(audio_dir, exist_ok=True)
+
+    def sil(dur, path):
+        subprocess.run(["ffmpeg", "-y", "-v", "quiet", "-f", "lavfi", "-i",
+                        f"anullsrc=r={SR}:cl=mono", "-t", f"{dur:.3f}", path], check=True)
+    sp, ss = os.path.join(audio_dir, "_sp.wav"), os.path.join(audio_dir, "_ss.wav")
+    sil(PARA_PAUSE, sp); sil(PARA_PAUSE + SECT_PAUSE, ss)
+
+    timings, concat, t, idx = [], [], 0.0, 0
+    n_secs = len(script["sections"])
+    for si, sec in enumerate(script["sections"]):
+        n_p = len(sec["paragraphs"])
+        for pi, para in enumerate(sec["paragraphs"]):
+            out = os.path.join(audio_dir, f"p_{idx:04d}.{ext}")
+            if not (os.path.exists(out) and os.path.getsize(out) > 1000):
+                if engine == "eleven":
+                    synth_eleven(para["text"].strip(), out, key, voice_id)
+                else:
+                    synth_piper(para["text"].strip(), out)
+            dur = ffdur(out)
+            last = (pi == n_p - 1)
+            pause = 0.0 if (si == n_secs - 1 and last) else \
+                    (PARA_PAUSE + SECT_PAUSE if last else PARA_PAUSE)
+            timings.append({"idx": idx, "section": si, "para": pi,
+                            "start": round(t, 3), "dur": round(dur + pause, 3)})
+            concat.append(f"file '{out}'")
+            if pause:
+                concat.append(f"file '{ss if last else sp}'")
+            t += dur + pause; idx += 1
+            if idx % 5 == 0:
+                print(f"[tts] {idx} paragraphs, {t/60:.1f} min", flush=True)
+
+    lf = os.path.join(audio_dir, "concat.txt")
+    with open(lf, "w") as f:
+        f.write("\n".join(concat) + "\n")
+    narr = os.path.join(BASE, "work", "narration.wav")
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0",
+                    "-i", lf, "-ar", str(SR), "-ac", "1", "-c:a", "pcm_s16le",
+                    narr], check=True)
+    with open(os.path.join(BASE, "work", "timings.json"), "w") as f:
+        json.dump({"total": round(t, 3), "items": timings}, f, indent=1)
+    print(f"[tts] DONE — {t/60:.1f} min -> work/narration.wav")
+
+if __name__ == "__main__":
+    main()

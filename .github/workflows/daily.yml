@@ -30,7 +30,7 @@ jobs:
       - name: Install deps
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
-          pip install -q anthropic google-api-python-client google-auth Pillow piper-tts
+          pip install -q anthropic google-api-python-client google-auth Pillow piper-tts numpy pydub
 
       - name: Generate script (Claude + web search)
         env:
@@ -61,8 +61,19 @@ jobs:
       - name: Visuals
         run: python3 scripts/visuals.py content/current/script.json
 
+      - name: Download b-roll library
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p work/broll
+          gh release download broll -R "$GITHUB_REPOSITORY" -D work/broll || echo "no b-roll release yet"
+          ls -la work/broll || true
+
+      - name: Sound effects
+        run: python3 scripts/sfx.py
+
       - name: Assemble
-        run: python3 scripts/assemble.py
+        run: python3 scripts/assemble.py content/current/script.json
 
       - name: Upload to YouTube
         env:

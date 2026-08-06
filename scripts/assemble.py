@@ -65,10 +65,12 @@ def broll_cut(src, start, dur, out, title=None, flash=True, first_flash_only=Fal
     if flash:
         vf.append("fade=t=in:st=0:d=0.14:color=white")
     if title:
+        # bottom-center caption, bold white with black outline (doc style)
         vf.append(
             f"drawtext=fontfile='{FONT}':text='{esc(title)}':"
-            f"fontsize=86:fontcolor=white:x=90:y=h-240:"
-            f"box=1:boxcolor=black@0.82:boxborderw=26")
+            f"fontsize=64:fontcolor=white:x=(w-text_w)/2:y=h-150:"
+            f"borderw=5:bordercolor=black@0.9:"
+            f"shadowx=3:shadowy=3:shadowcolor=black@0.5")
     run(["ffmpeg", "-y", "-v", "error", "-ss", f"{start:.2f}", "-i", src,
          "-t", f"{dur:.3f}", "-vf", ",".join(vf), "-r", str(FPS),
          "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",

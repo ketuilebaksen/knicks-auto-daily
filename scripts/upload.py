@@ -41,6 +41,12 @@ def main():
                    "selfDeclaredMadeForKids": False,
                    "containsSyntheticMedia": True},
     }
+    # scheduled publish: upload as private with publishAt, YouTube flips it public
+    pub = meta.get("publish_at")
+    if pub and meta.get("privacy", "public") == "public":
+        body["status"]["privacyStatus"] = "private"
+        body["status"]["publishAt"] = pub
+        print(f"[upload] scheduled publish at {pub}")
     y = yt()
     media = MediaFileUpload(video, chunksize=16 * 1024 * 1024, resumable=True,
                             mimetype="video/mp4")

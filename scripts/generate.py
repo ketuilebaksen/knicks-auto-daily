@@ -107,10 +107,18 @@ def main():
     os.makedirs(CUR, exist_ok=True)
     with open(os.path.join(CUR, "script.json"), "w") as f:
         json.dump(d, f, indent=1, ensure_ascii=False)
+    meta_out = {"title": d["title"], "description": meta["description"],
+                "tags": meta["tags"], "privacy": os.environ.get("PRIVACY", "public")}
+    # schedule today's publish time (UTC HH:MM, e.g. 15:00 = 18:00 Istanbul)
+    pub_hhmm = os.environ.get("PUBLISH_UTC", "15:00")
+    if meta_out["privacy"] == "public" and pub_hhmm:
+        h, m = map(int, pub_hhmm.split(":"))
+        now = datetime.datetime.utcnow()
+        target = now.replace(hour=h, minute=m, second=0, microsecond=0)
+        if target > now + datetime.timedelta(minutes=10):
+            meta_out["publish_at"] = target.strftime("%Y-%m-%dT%H:%M:%SZ")
     with open(os.path.join(CUR, "meta.json"), "w") as f:
-        json.dump({"title": d["title"], "description": meta["description"],
-                   "tags": meta["tags"], "privacy": os.environ.get("PRIVACY", "public")},
-                  f, indent=1, ensure_ascii=False)
+        json.dump(meta_out, f, indent=1, ensure_ascii=False)
     with open(LOG, "a") as f:
         f.write(f"{today}: {d['title']}\n")
     print(f"[generate] OK — {words} words, {n_para} paragraphs: {d['title']}")

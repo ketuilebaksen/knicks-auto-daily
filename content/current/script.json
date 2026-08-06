@@ -1,36 +1,50 @@
 {
-  "title": "TEST — Knicks Offseason Breakdown",
-  "thumbnail_lines": ["KNICKS OFFSEASON", "FULL BREAKDOWN"],
-  "sections": [
+ "title": "Knicks Champions: Who's Rising and Who's Falling After the Title Run",
+ "manual": true,
+ "thumbnail_lines": [
+  "CHAMPIONS.",
+  "NOW WHAT?"
+ ],
+ "sections": [
+  {
+   "heading": "THE AFTERMATH",
+   "paragraphs": [
     {
-      "heading": "THE OFFSEASON SO FAR",
-      "paragraphs": [
-        {
-          "text": "Welcome back to Knicks Nation, everybody. Today we are going deep on the entire offseason, move by move, and what it actually means for this roster heading into the new season. There is a lot to get through, so grab a coffee, settle in, and let's talk some basketball.",
-          "card_title": "The Offseason, Explained",
-          "card_lines": ["Every move, graded", "What it means for the rotation", "The path in the East"]
-        },
-        {
-          "text": "The front office had three clear priorities this summer. Depth behind the starters, shooting on the wings, and keeping the core together without blowing past the second apron. How did they do? That is exactly what we are breaking down today.",
-          "card_title": "Three Priorities",
-          "card_lines": ["Bench depth", "Wing shooting", "Second apron math"]
-        }
-      ]
+     "text": "The New York Knicks just wrapped up the single most important offseason this franchise has had in more than fifty years.",
+     "card_title": "The Most Important Offseason in 50 Years",
+     "card_lines": []
     },
     {
-      "heading": "THE ROTATION",
-      "paragraphs": [
-        {
-          "text": "Let's start with the starting five, because on paper this is one of the deepest opening units in the Eastern Conference. The questions are not about talent. They are about fit, health, and whether the bench can hold leads in the minutes that matter.",
-          "card_title": "The Starting Five",
-          "card_lines": ["Top-five unit in the East", "Fit and health questions", "Bench minutes are the swing factor"]
-        },
-        {
-          "text": "And that brings us to the biggest storyline of the year. If this team wants to get out of the East, the margin for error is razor thin. Every rotation decision in October is going to echo in May. That is the stakes for this season.",
-          "card_title": "The Stakes",
-          "card_lines": ["Razor-thin margins", "October decisions, May consequences"]
-        }
-      ]
+     "text": "Why? Because for the first time since nineteen seventy three, the Larry O'Brien trophy is sitting in Madison Square Garden.",
+     "card_title": "First Title Since 1973",
+     "card_lines": []
+    },
+    {
+     "text": "Let that sink in for a second. More than five decades of waiting, of heartbreak, of wait till next year — and it finally happened.",
+     "card_title": "Five Decades of Waiting",
+     "card_lines": []
+    },
+    {
+     "text": "But championships don't just change banners hanging from the rafters. They change how we look at every single player on that roster.",
+     "card_title": "Championships Change Everything",
+     "card_lines": []
+    },
+    {
+     "text": "Some guys saw their stock shoot through the roof this summer. Others, fair or not, watched their value take a hit.",
+     "card_title": "Stocks Rising. Stocks Falling.",
+     "card_lines": []
+    },
+    {
+     "text": "Today we're breaking down exactly who's rising and who's falling in the aftermath of this Knicks title run.",
+     "card_title": "Who's Up. Who's Down.",
+     "card_lines": []
+    },
+    {
+     "text": "And then we're diving deep into the one massive question mark still hanging over this championship roster. Who in the world is playing backup center?",
+     "card_title": "Who Is the Backup Center?",
+     "card_lines": []
     }
-  ]
+   ]
+  }
+ ]
 }

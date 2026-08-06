@@ -1,0 +1,91 @@
+name: daily-video
+on:
+  schedule:
+    - cron: "0 12 * * *"
+  workflow_dispatch:
+    inputs:
+      privacy:
+        description: "public / private / unlisted"
+        required: false
+        default: "public"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: render
+  cancel-in-progress: false
+
+jobs:
+  produce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          pip install -q anthropic google-api-python-client google-auth Pillow piper-tts
+
+      - name: Generate script (Claude + web search)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          MODEL: ${{ vars.MODEL || 'claude-sonnet-4-5' }}
+          TARGET_MINUTES: ${{ vars.TARGET_MINUTES || '30' }}
+          PRIVACY: ${{ inputs.privacy || 'public' }}
+        run: python3 scripts/generate.py
+
+      - name: Commit content
+        run: |
+          git config user.name "knicks-bot" && git config user.email "bot@knicks.auto"
+          git add content/ && git commit -m "daily $(date +%F)" || echo "nothing to commit"
+          git push || true
+
+      - name: Piper fallback voice (only if no ElevenLabs key)
+        if: ${{ secrets.ELEVEN_API_KEY == '' }}
+        run: |
+          mkdir -p assets/voice
+          curl -sL https://github.com/rhasspy/piper/releases/download/v0.0.2/voice-en-us-ryan-high.tar.gz | tar xz -C assets/voice/
+
+      - name: TTS
+        env:
+          ELEVEN_API_KEY: ${{ secrets.ELEVEN_API_KEY }}
+          ELEVEN_VOICE: ${{ vars.ELEVEN_VOICE || 'alex' }}
+          ELEVEN_MODEL: ${{ vars.ELEVEN_MODEL || 'eleven_flash_v2_5' }}
+        run: python3 scripts/tts.py content/current/script.json
+
+      - name: Visuals
+        run: python3 scripts/visuals.py content/current/script.json
+
+      - name: Assemble
+        run: python3 scripts/assemble.py
+
+      - name: Upload to YouTube
+        env:
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+        run: python3 scripts/upload.py content/current/meta.json
+
+      - name: Result summary
+        if: always()
+        run: |
+          echo "## Result" >> $GITHUB_STEP_SUMMARY
+          cat upload_result.json >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "upload failed — check logs" >> $GITHUB_STEP_SUMMARY
+
+      - name: Keep artifacts (2 days)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-${{ github.run_number }}
+          path: |
+            work/final.mp4
+            work/thumbnail.jpg
+            upload_result.json
+          retention-days: 2
+          if-no-files-found: ignore

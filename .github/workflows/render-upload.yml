@@ -1,0 +1,79 @@
+name: render-upload
+on:
+  push:
+    paths:
+      - "content/current/**"
+  workflow_dispatch:
+
+concurrency:
+  group: render
+  cancel-in-progress: false
+
+jobs:
+  video:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          pip install -q google-api-python-client google-auth Pillow piper-tts numpy pydub
+
+      - name: Piper fallback voice
+        run: |
+          mkdir -p assets/voice
+          curl -sL https://github.com/rhasspy/piper/releases/download/v0.0.2/voice-en-us-ryan-high.tar.gz | tar xz -C assets/voice/
+
+      - name: TTS
+        env:
+          ELEVEN_API_KEY: ${{ secrets.ELEVEN_API_KEY }}
+          ELEVEN_VOICE: ${{ vars.ELEVEN_VOICE || 'alex' }}
+          ELEVEN_MODEL: ${{ vars.ELEVEN_MODEL || 'eleven_flash_v2_5' }}
+        run: python3 scripts/tts.py content/current/script.json
+
+      - name: Visuals
+        run: python3 scripts/visuals.py content/current/script.json
+
+      - name: Download b-roll library
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p work/broll
+          gh release download broll -R "$GITHUB_REPOSITORY" -D work/broll || echo "no b-roll release yet"
+
+      - name: Sound effects
+        run: python3 scripts/sfx.py
+
+      - name: Assemble
+        run: python3 scripts/assemble.py content/current/script.json
+
+      - name: Upload to YouTube
+        env:
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+        run: python3 scripts/upload.py content/current/meta.json
+
+      - name: Result summary
+        if: always()
+        run: |
+          echo "## Result" >> $GITHUB_STEP_SUMMARY
+          cat upload_result.json >> $GITHUB_STEP_SUMMARY 2>/dev/null || echo "upload failed — check logs" >> $GITHUB_STEP_SUMMARY
+
+      - name: Keep artifacts (2 days)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: video-${{ github.run_number }}
+          path: |
+            work/final.mp4
+            work/thumbnail.jpg
+            upload_result.json
+          retention-days: 2
+          if-no-files-found: ignore

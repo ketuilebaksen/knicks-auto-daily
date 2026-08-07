@@ -71,8 +71,7 @@ class Broll:
 def broll_cut(src, start, dur, out, caption=None, big_word=None, flash=True):
     vf = ["scale=1920:1080:force_original_aspect_ratio=increase:flags=lanczos",
           "crop=1920:1080", "unsharp=5:5:0.4:5:5:0.0", f"fps={FPS}"]
-    if flash:
-        vf.append("fade=t=in:st=0:d=0.12:color=white")
+    # transition flash disabled (owner preference)
     if caption:
         vf.append(
             f"drawtext=fontfile='{FONT}':text='{esc(caption)}':"
@@ -163,7 +162,7 @@ def make_intro(broll, seg_dir):
             vf = (f"scale=2400:1350:flags=lanczos,"
                   f"zoompan=z='min(1.0+0.004*on,1.10)':d={frames}"
                   f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1920x1080:fps={FPS},"
-                  f"format=yuv420p,fade=t=in:st=0:d=0.12:color=white")
+                  f"format=yuv420p")
             run(["ffmpeg", "-y", "-v", "error", "-loop", "1", "-i", card, "-vf", vf,
                  "-t", "2.4", "-r", str(FPS), "-c:v", "libx264", "-preset", "medium",
                  "-crf", "19", "-an", p])
@@ -181,8 +180,7 @@ def make_outro(seg_dir):
         vf = (f"scale=2400:1350:flags=lanczos,"
               f"zoompan=z='min(1.0+0.0006*on,1.08)':d={frames}"
               f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1920x1080:fps={FPS},"
-              f"format=yuv420p,fade=t=in:st=0:d=0.15:color=white,"
-              f"fade=t=out:st=6.3:d=0.7")
+              f"format=yuv420p,fade=t=out:st=6.3:d=0.7")
         run(["ffmpeg", "-y", "-v", "error", "-loop", "1", "-i", card, "-vf", vf,
              "-t", "7.0", "-r", str(FPS), "-c:v", "libx264", "-preset", "medium",
              "-crf", "19", "-an", p])
@@ -315,20 +313,7 @@ def main():
                AudioSegment.from_wav(narration).apply_gain(NARR_GAIN) +
                AudioSegment.silent(duration=int(OUTRO_D * 1000)))
 
-        # sparse SFX: intro + evenly-picked section transitions, max MAX_SFX
-        events = [0.0, max(0.0, INTRO_D - 0.15)] + \
-                 [s + INTRO_D for s in section_starts]
-        if len(events) > MAX_SFX:
-            step = len(events) / MAX_SFX
-            events = [events[int(k * step)] for k in range(MAX_SFX)]
-        try:
-            wh = AudioSegment.from_wav(
-                os.path.join(BASE, "work", "sfx", "whoosh.wav")).apply_gain(SFX_GAIN)
-            for ts in events:
-                mix = mix.overlay(wh, position=max(0, int(ts * 1000) - 120))
-            print(f"[assemble] SFX: {len(events)} events")
-        except Exception as e:
-            print(f"[assemble] SFX skipped: {e}")
+        # transition SFX disabled (owner preference)
 
         # background music bed from owner's library
         tracks = media_lib("music", ("*.mp3", "*.wav", "*.m4a", "*.MP3", "*.WAV"))

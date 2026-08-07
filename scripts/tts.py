@@ -17,6 +17,7 @@ import json, os, subprocess, sys, time, urllib.request
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PARA_PAUSE, SECT_PAUSE, SR = 0.55, 1.10, 44100
 API = "https://api.elevenlabs.io/v1"
+DEFAULT_VOICE_ID = "S9UjcNYIwfBOtZiDnIQT"  # Alex - Smooth, Balanced and Clear
 
 def ffdur(path):
     r = subprocess.run(["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
@@ -24,6 +25,7 @@ def ffdur(path):
     return float(r.stdout.strip())
 
 def http(url, key, data=None, retries=4):
+    import urllib.error
     for i in range(retries):
         try:
             req = urllib.request.Request(url, headers={
@@ -31,6 +33,18 @@ def http(url, key, data=None, retries=4):
                 data=json.dumps(data).encode() if data else None)
             with urllib.request.urlopen(req, timeout=180) as r:
                 return r.read()
+        except urllib.error.HTTPError as e:
+            body = ""
+            try:
+                body = e.read().decode()[:400]
+            except Exception:
+                pass
+            print(f"[tts] API error HTTP {e.code}: {body}", flush=True)
+            if e.code in (400, 401, 403, 404, 422):
+                raise SystemExit(f"[tts] fatal: HTTP {e.code} — {body}")
+            if i == retries - 1:
+                raise
+            time.sleep(5 * (i + 1))
         except Exception as e:
             if i == retries - 1:
                 raise
@@ -38,17 +52,16 @@ def http(url, key, data=None, retries=4):
             time.sleep(5 * (i + 1))
 
 def pick_voice(key):
-    vid = os.environ.get("ELEVEN_VOICE_ID")
+    """No API call needed: explicit id via env/file, else the baked-in Alex id."""
+    vid = os.environ.get("ELEVEN_VOICE_ID", "").strip()
     if vid:
         return vid
-    want = os.environ.get("ELEVEN_VOICE", "alex").lower()
-    voices = json.loads(http(f"{API}/voices", key))["voices"]
-    for v in voices:
-        if want in v["name"].lower():
-            print(f"[tts] voice: {v['name']} ({v['voice_id']})")
-            return v["voice_id"]
-    raise SystemExit(f"[tts] voice '{want}' not found in My Voices. "
-                     f"Available: {[v['name'] for v in voices]}")
+    fpath = os.path.join(BASE, "assets", "voice_id.txt")
+    if os.path.exists(fpath):
+        v = open(fpath).read().strip()
+        if v:
+            return v
+    return DEFAULT_VOICE_ID
 
 def synth_eleven(text, out, key, voice_id):
     body = {"text": text,

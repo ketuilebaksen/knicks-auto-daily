@@ -1,7 +1,7 @@
 name: daily-video
 on:
   schedule:
-    - cron: "0 12 * * *"
+    - cron: "0 13 * * *"
   workflow_dispatch:
     inputs:
       privacy:
@@ -67,7 +67,15 @@ jobs:
         run: |
           mkdir -p work/broll
           gh release download broll -R "$GITHUB_REPOSITORY" -D work/broll || echo "no b-roll release yet"
-          ls -la work/broll || true
+
+      - name: Download music and photos
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p work/music work/photos
+          gh release download music -R "$GITHUB_REPOSITORY" -D work/music || echo "no music release yet"
+          gh release download photos -R "$GITHUB_REPOSITORY" -D work/photos || echo "no photos release yet"
+          python3 scripts/photos.py content/current/script.json || echo "auto-photos skipped"
 
       - name: Sound effects
         run: python3 scripts/sfx.py

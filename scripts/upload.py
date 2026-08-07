@@ -30,10 +30,17 @@ def main():
     with open(sys.argv[1]) as f:
         meta = json.load(f)
     video = os.path.join(BASE, "work", "final.mp4")
-    thumb = os.path.join(BASE, "work", "thumbnail.jpg")
+    # manual thumbnail wins: drop content/current/thumbnail.jpg into the repo
+    manual_thumb = os.path.join(BASE, "content", "current", "thumbnail.jpg")
+    thumb = manual_thumb if os.path.exists(manual_thumb) else \
+        os.path.join(BASE, "work", "thumbnail.jpg")
+    desc = meta["description"]
+    credits_f = os.path.join(BASE, "work", "photo_credits.txt")
+    if os.path.exists(credits_f):
+        desc += "\n\nPhoto credits:\n" + open(credits_f).read().strip()
     body = {
         "snippet": {"title": meta["title"][:100],
-                    "description": meta["description"][:4900],
+                    "description": desc[:4900],
                     "tags": meta.get("tags", [])[:30],
                     "categoryId": "17",
                     "defaultLanguage": "en", "defaultAudioLanguage": "en"},

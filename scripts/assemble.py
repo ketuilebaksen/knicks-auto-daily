@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-assemble.py — build final video.
+assemble.py — final video builder.
 
-Hook (first section): Vox-style fast cuts from the b-roll library (work/broll/*)
-with white-flash transitions, bold kinetic titles and whoosh SFX. Fast pacing.
-Body: branded info cards (slow zoom) + every few paragraphs a b-roll interlude
-with a lower-third. Different random scenes every day (seeded by date).
-Falls back to cards-only if no b-roll exists.
+- Hook (section 0): fast Vox-style cuts from b-roll, white-flash transitions,
+  bottom captions + occasional big keyword pops synced to narration.
+- Body: info cards + b-roll interludes + slow ken-burns photo segments.
+- Audio: narration (+12 dB) + owner's background music (-18.5 dB, looped,
+  faded) + at most ~5 transition SFX per video. Final loudness normalized.
+- Quality: lanczos scaling + light sharpen, CRF 18.
 
 Usage: python3 scripts/assemble.py content/current/script.json
 """
@@ -15,8 +16,15 @@ import datetime, glob, json, os, random, re, subprocess, sys
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FPS = 24
 FONT = os.path.join(BASE, "assets", "Anton-Regular.ttf")
-CUT_LEN = 2.6          # target seconds per hook cut (fast)
-BODY_BROLL_EVERY = 4   # every Nth body paragraph becomes a b-roll interlude
+CUT_LEN = 2.8            # seconds per hook cut
+BODY_BROLL_EVERY = 4     # every Nth body paragraph -> b-roll interlude
+NARR_GAIN = float(os.environ.get("NARR_GAIN", "12.0"))     # dB
+MUSIC_GAIN = float(os.environ.get("MUSIC_GAIN", "-18.5"))  # dB
+SFX_GAIN = float(os.environ.get("SFX_GAIN", "-15"))        # dB
+MAX_SFX = int(os.environ.get("MAX_SFX", "5"))
+OVERLAY_KINDS = ["speech", "lower3", "comic", "chat"]
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 def run(cmd):
     subprocess.run(cmd, check=True)
@@ -29,62 +37,156 @@ def ffdur(path):
     except ValueError:
         return 0.0
 
-def esc(text):
-    text = re.sub(r"[^0-9A-Za-z ÇĞİÖŞÜçğıöşü'\-\.]", "", text)
-    return text.replace("'", r"\'").replace(":", r"\:").upper()[:40]
+def esc(text, maxlen=40):
+    text = re.sub(r"[^0-9A-Za-z ÇĞİÖŞÜçğıöşü'\-\.%$]", "", str(text))
+    return text.replace("'", r"\'").replace(":", r"\:").upper()[:maxlen]
+
+def media_lib(sub, exts):
+    files = []
+    for e in exts:
+        files += glob.glob(os.path.join(BASE, "work", sub, "**", e), recursive=True)
+    return sorted(set(files))
 
 class Broll:
     def __init__(self, rng):
-        exts = ("*.mp4", "*.mov", "*.mkv", "*.webm", "*.m4v", "*.MP4", "*.MOV")
-        files = []
-        for e in exts:
-            files += glob.glob(os.path.join(BASE, "work", "broll", "**", e), recursive=True)
         self.rng = rng
         self.clips = []
-        for f in sorted(set(files)):
+        for f in media_lib("broll", ("*.mp4", "*.mov", "*.mkv", "*.webm", "*.m4v",
+                                     "*.MP4", "*.MOV")):
             d = ffdur(f)
             if d >= 3.0:
                 self.clips.append((f, d))
         self.rng.shuffle(self.clips)
         self.i = 0
-        print(f"[assemble] b-roll library: {len(self.clips)} clips")
+        print(f"[assemble] b-roll: {len(self.clips)} clips")
 
     def any(self):
         return len(self.clips) > 0
 
     def pick(self, need):
-        """Return (path, start) giving a fresh random window of `need` seconds."""
         f, d = self.clips[self.i % len(self.clips)]
         self.i += 1
-        start = self.rng.uniform(0, max(0.0, d - need - 0.2))
-        return f, start
+        return f, self.rng.uniform(0, max(0.0, d - need - 0.2))
 
-def broll_cut(src, start, dur, out, title=None, flash=True, first_flash_only=False):
-    vf = ["scale=1920:1080:force_original_aspect_ratio=increase",
-          "crop=1920:1080", f"fps={FPS}"]
+def broll_cut(src, start, dur, out, caption=None, big_word=None, flash=True):
+    vf = ["scale=1920:1080:force_original_aspect_ratio=increase:flags=lanczos",
+          "crop=1920:1080", "unsharp=5:5:0.4:5:5:0.0", f"fps={FPS}"]
     if flash:
-        vf.append("fade=t=in:st=0:d=0.14:color=white")
-    if title:
-        # bottom-center caption, bold white with black outline (doc style)
+        vf.append("fade=t=in:st=0:d=0.12:color=white")
+    if caption:
         vf.append(
-            f"drawtext=fontfile='{FONT}':text='{esc(title)}':"
-            f"fontsize=64:fontcolor=white:x=(w-text_w)/2:y=h-150:"
-            f"borderw=5:bordercolor=black@0.9:"
-            f"shadowx=3:shadowy=3:shadowcolor=black@0.5")
+            f"drawtext=fontfile='{FONT}':text='{esc(caption)}':"
+            f"fontsize=62:fontcolor=white:x=(w-text_w)/2:y=h-150:"
+            f"borderw=5:bordercolor=black@0.9:shadowx=3:shadowy=3:shadowcolor=black@0.5")
+    if big_word:
+        vf.append(
+            f"drawtext=fontfile='{FONT}':text='{esc(big_word, 24)}':"
+            f"fontsize=132:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2-60:"
+            f"borderw=7:bordercolor=black@0.85:alpha='min(1,t/0.22)'")
     run(["ffmpeg", "-y", "-v", "error", "-ss", f"{start:.2f}", "-i", src,
          "-t", f"{dur:.3f}", "-vf", ",".join(vf), "-r", str(FPS),
-         "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+         "-c:v", "libx264", "-preset", "medium", "-crf", "18",
          "-pix_fmt", "yuv420p", "-an", out])
 
-def card_segment(card, dur, idx, out):
+def photo_segment(img, dur, out, caption=None):
+    frames = max(2, round(dur * FPS))
+    # slow, professional ken-burns: 1.00 -> 1.08 across the whole segment
+    z = f"min(1+0.08*on/{frames},1.08)"
+    vf = (f"scale=2400:-2:flags=lanczos,crop=2400:1350,"
+          f"zoompan=z='{z}':d={frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+          f":s=1920x1080:fps={FPS},format=yuv420p")
+    cmd = ["ffmpeg", "-y", "-v", "error", "-loop", "1", "-i", img,
+           "-vf", vf, "-t", f"{dur:.3f}", "-r", str(FPS),
+           "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-an", out]
+    if caption:
+        cmd[6] = vf + (f",drawtext=fontfile='{FONT}':text='{esc(caption)}':"
+                       f"fontsize=62:fontcolor=white:x=(w-text_w)/2:y=h-150:"
+                       f"borderw=5:bordercolor=black@0.9")
+    run(cmd)
+
+def card_segment(card, dur, idx, out, overlay=None):
     frames = max(2, round(dur * FPS))
     z = "min(1.0+0.00022*on,1.12)" if idx % 2 == 0 else "max(1.12-0.00022*on,1.0)"
-    vf = (f"scale=2400:1350,zoompan=z='{z}':d={frames}"
-          f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1920x1080:fps={FPS},"
-          f"format=yuv420p")
-    run(["ffmpeg", "-y", "-v", "error", "-loop", "1", "-i", card,
-         "-vf", vf, "-t", f"{dur:.3f}", "-r", str(FPS),
-         "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-an", out])
+    base = (f"[0:v]scale=2400:1350:flags=lanczos,zoompan=z='{z}':d={frames}"
+            f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1920x1080:fps={FPS},"
+            f"format=yuv420p[bg]")
+    cmd = ["ffmpeg", "-y", "-v", "error", "-loop", "1", "-i", card]
+    if not overlay:
+        cmd += ["-filter_complex", base, "-map", "[bg]"]
+    else:
+        png, kind, at, bw, bh = (overlay["png"], overlay["kind"], overlay["at"],
+                                 overlay["w"], overlay["h"])
+        cmd += ["-i", png]
+        if kind == "comic":
+            x = (1920 - bw) // 2 + (170 if idx % 2 == 0 else -170)
+            y = max(60, (1080 - bh) // 2 - 190)
+            fc = (base +
+                  f";[1:v]scale=iw*0.55:-1[c1];[1:v]scale=iw*1.18:-1[c2];"
+                  f"[bg][c1]overlay=x={x + int(bw*0.22)}:y={y + int(bh*0.22)}:"
+                  f"enable='between(t,{at:.2f},{at + 0.09:.2f})'[t1];"
+                  f"[t1][c2]overlay=x={x - int(bw*0.09)}:y={y - int(bh*0.09)}:"
+                  f"enable='between(t,{at + 0.09:.2f},{at + 0.18:.2f})'[t2];"
+                  f"[t2][1:v]overlay=x={x}:y={y}:enable='gte(t,{at + 0.18:.2f})'[vo]")
+        else:
+            if kind == "chat":
+                x, yt = 1920 - bw - 140, 470
+            elif kind == "lower3":
+                x, yt = 110, 1080 - bh - 210
+            else:  # speech
+                x, yt = 140, 520
+            # bounce-in from below: damped overshoot settling at yt
+            yex = (f"{yt}+340*exp(-7.5*(t-{at:.2f}))*cos(9*(t-{at:.2f}))")
+            fc = (base + f";[bg][1:v]overlay=x={x}:y='{yex}':"
+                  f"enable='gte(t,{at:.2f})'[vo]")
+        cmd += ["-filter_complex", fc, "-map", "[vo]"]
+    cmd += ["-t", f"{dur:.3f}", "-r", str(FPS),
+            "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-an", out]
+    run(cmd)
+
+def make_intro(broll, seg_dir):
+    """Fast branded opener: 2 flash cuts + title card. Returns (files, duration)."""
+    files, d_total = [], 0.0
+    if broll.any():
+        for k in range(2):
+            p = os.path.join(seg_dir, f"intro_cut{k}.mp4")
+            if not (os.path.exists(p) and os.path.getsize(p) > 5000):
+                src, start = broll.pick(1.1)
+                broll_cut(src, start, 1.1, p,
+                          big_word="NY KNICKS DAILY" if k == 1 else None, flash=True)
+            files.append(p)
+            d_total += 1.1
+    card = os.path.join(BASE, "work", "intro.jpg")
+    if os.path.exists(card):
+        p = os.path.join(seg_dir, "intro_card.mp4")
+        if not (os.path.exists(p) and os.path.getsize(p) > 5000):
+            frames = max(2, round(2.4 * FPS))
+            vf = (f"scale=2400:1350:flags=lanczos,"
+                  f"zoompan=z='min(1.0+0.004*on,1.10)':d={frames}"
+                  f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1920x1080:fps={FPS},"
+                  f"format=yuv420p,fade=t=in:st=0:d=0.12:color=white")
+            run(["ffmpeg", "-y", "-v", "error", "-loop", "1", "-i", card, "-vf", vf,
+                 "-t", "2.4", "-r", str(FPS), "-c:v", "libx264", "-preset", "medium",
+                 "-crf", "19", "-an", p])
+        files.append(p)
+        d_total += 2.4
+    return files, d_total
+
+def make_outro(seg_dir):
+    card = os.path.join(BASE, "work", "outro.jpg")
+    if not os.path.exists(card):
+        return [], 0.0
+    p = os.path.join(seg_dir, "outro_card.mp4")
+    if not (os.path.exists(p) and os.path.getsize(p) > 5000):
+        frames = max(2, round(7.0 * FPS))
+        vf = (f"scale=2400:1350:flags=lanczos,"
+              f"zoompan=z='min(1.0+0.0006*on,1.08)':d={frames}"
+              f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':s=1920x1080:fps={FPS},"
+              f"format=yuv420p,fade=t=in:st=0:d=0.15:color=white,"
+              f"fade=t=out:st=6.3:d=0.7")
+        run(["ffmpeg", "-y", "-v", "error", "-loop", "1", "-i", card, "-vf", vf,
+             "-t", "7.0", "-r", str(FPS), "-c:v", "libx264", "-preset", "medium",
+             "-crf", "19", "-an", p])
+    return [p], 7.0
 
 def main():
     script_path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(
@@ -101,24 +203,33 @@ def main():
 
     rng = random.Random(datetime.date.today().toordinal() * 6151 + len(paras))
     broll = Broll(rng)
+    photos = media_lib("photos", ("*.jpg", "*.jpeg", "*.png", "*.webp"))
+    rng.shuffle(photos)
+    pi_idx = 0
     seg_dir = os.path.join(BASE, "work", "segs")
     os.makedirs(seg_dir, exist_ok=True)
 
-    concat, sfx_events = [], []
+    concat, section_starts = [], []
+    intro_files, INTRO_D = make_intro(broll, seg_dir)
+    concat += [f"file '{p}'" for p in intro_files]
     n = len(tm["items"])
+    last_popup_t = -999.0
+    ov_slot = 0
     for it in tm["items"]:
         i, dur, t0 = it["idx"], it["dur"], it["start"]
         si, sec, para = paras[i]
+        if it["para"] == 0 and si > 0:
+            section_starts.append(t0)
         card = os.path.join(BASE, "work", "cards", f"c_{i:04d}.jpg")
         seg = os.path.join(seg_dir, f"s_{i:04d}.mp4")
         concat.append(f"file '{seg}'")
         fresh = not (os.path.exists(seg) and os.path.getsize(seg) > 5000)
 
         is_hook = (si == 0) and broll.any()
-        is_interlude = (si > 0) and broll.any() and (i % BODY_BROLL_EVERY == 2)
+        is_clip_break = (si > 0) and broll.any() and (i % BODY_BROLL_EVERY == 2)
+        is_photo_break = (si > 0) and photos and (i % BODY_BROLL_EVERY == 0) and i > 0
 
         if is_hook:
-            # Vox-style: split narration span into fast cuts, each a new scene
             cuts = max(1, round(dur / CUT_LEN))
             cut_d = dur / cuts
             parts = []
@@ -126,30 +237,66 @@ def main():
                 part = os.path.join(seg_dir, f"h_{i:04d}_{k}.mp4")
                 if fresh:
                     src, start = broll.pick(cut_d)
+                    big = None
+                    if cuts >= 3 and k == cuts // 2 and para.get("card_lines"):
+                        big = para["card_lines"][0]
                     broll_cut(src, start, cut_d, part,
-                              title=para.get("card_title") if k == 0 else None,
-                              flash=True)
+                              caption=para.get("card_title") if k == 0 else None,
+                              big_word=big, flash=True)
                 parts.append(f"file '{part}'")
-                sfx_events.append(("whoosh", t0 + k * cut_d))
             if fresh:
                 lst = os.path.join(seg_dir, f"h_{i:04d}.txt")
                 with open(lst, "w") as f:
                     f.write("\n".join(parts) + "\n")
                 run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0",
                      "-i", lst, "-c", "copy", seg])
-        elif is_interlude:
+        elif is_photo_break:
+            img = photos[pi_idx % len(photos)]
+            pi_idx += 1
+            if fresh:
+                photo_segment(img, dur, seg, caption=para.get("card_title"))
+        elif is_clip_break:
             if fresh:
                 src, start = broll.pick(dur)
                 broll_cut(src, start, dur, seg,
-                          title=para.get("card_title") or sec["heading"], flash=True)
-            sfx_events.append(("whoosh", t0))
+                          caption=para.get("card_title") or sec["heading"], flash=True)
         else:
+            overlay = None
+            if dur >= 5 and (t0 - last_popup_t) >= 10 and para.get("card_lines"):
+                kind = OVERLAY_KINDS[ov_slot % len(OVERLAY_KINDS)]
+                ov_slot += 1
+                last_popup_t = t0
+                if fresh:
+                    ov_dir = os.path.join(BASE, "work", "overlays")
+                    os.makedirs(ov_dir, exist_ok=True)
+                    png = os.path.join(ov_dir, f"o_{i:04d}.png")
+                    lines = para["card_lines"]
+                    txt = lines[-1] if len(lines) > 1 else lines[0]
+                    try:
+                        import overlays as OV
+                        if kind == "comic":
+                            word = re.sub(r"[^A-Za-z ]", "",
+                                          str(para.get("card_title", ""))).split()
+                            word = (word[0].upper() + "!") if word else "BOOM!"
+                            w_, h_ = OV.comic_burst(word[:14], png)
+                        elif kind == "lower3":
+                            w_, h_ = OV.lower_third(para.get("card_title", ""),
+                                                    sec["heading"], png)
+                        elif kind == "chat":
+                            w_, h_ = OV.speech_bubble(txt, png, chat=True)
+                        else:
+                            w_, h_ = OV.speech_bubble(txt, png, chat=False)
+                        overlay = {"png": png, "kind": kind, "w": w_, "h": h_,
+                                   "at": max(1.0, dur * 0.4)}
+                    except Exception as e:
+                        print(f"[assemble] overlay skipped ({e})")
             if fresh:
-                card_segment(card, dur, i, seg)
-            if it["para"] == 0:  # section start on a card
-                sfx_events.append(("impact", t0))
+                card_segment(card, dur, i, seg, overlay=overlay)
         if i % 10 == 0:
             print(f"[assemble] segment {i+1}/{n}", flush=True)
+
+    outro_files, OUTRO_D = make_outro(seg_dir)
+    concat += [f"file '{p}'" for p in outro_files]
 
     listfile = os.path.join(seg_dir, "concat.txt")
     with open(listfile, "w") as f:
@@ -158,28 +305,61 @@ def main():
     run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0",
          "-i", listfile, "-c", "copy", silent])
 
-    # ---- audio: narration + SFX bed ----
+    # ---------- audio mix: narration (+gain) + sparse SFX + music bed ----------
+    total = tm["total"] + INTRO_D + OUTRO_D
     narration = os.path.join(BASE, "work", "narration.wav")
-    mixed = os.path.join(BASE, "work", "narration_sfx.wav")
+    mixed_path = os.path.join(BASE, "work", "narration_sfx.wav")
     try:
         from pydub import AudioSegment
-        base_a = AudioSegment.from_wav(narration)
-        wh = AudioSegment.from_wav(os.path.join(BASE, "work", "sfx", "whoosh.wav")) - 14
-        im = AudioSegment.from_wav(os.path.join(BASE, "work", "sfx", "impact.wav")) - 12
-        for kind, ts in sfx_events:
-            ms = max(0, int(ts * 1000) - 120)  # slight pre-roll
-            base_a = base_a.overlay(wh if kind == "whoosh" else im, position=ms)
-        base_a.export(mixed, format="wav")
-        print(f"[assemble] SFX mixed: {len(sfx_events)} events")
+        mix = (AudioSegment.silent(duration=int(INTRO_D * 1000)) +
+               AudioSegment.from_wav(narration).apply_gain(NARR_GAIN) +
+               AudioSegment.silent(duration=int(OUTRO_D * 1000)))
+
+        # sparse SFX: intro + evenly-picked section transitions, max MAX_SFX
+        events = [0.0, max(0.0, INTRO_D - 0.15)] + \
+                 [s + INTRO_D for s in section_starts]
+        if len(events) > MAX_SFX:
+            step = len(events) / MAX_SFX
+            events = [events[int(k * step)] for k in range(MAX_SFX)]
+        try:
+            wh = AudioSegment.from_wav(
+                os.path.join(BASE, "work", "sfx", "whoosh.wav")).apply_gain(SFX_GAIN)
+            for ts in events:
+                mix = mix.overlay(wh, position=max(0, int(ts * 1000) - 120))
+            print(f"[assemble] SFX: {len(events)} events")
+        except Exception as e:
+            print(f"[assemble] SFX skipped: {e}")
+
+        # background music bed from owner's library
+        tracks = media_lib("music", ("*.mp3", "*.wav", "*.m4a", "*.MP3", "*.WAV"))
+        if tracks:
+            rng.shuffle(tracks)
+            bed = AudioSegment.silent(duration=0)
+            ti = 0
+            while len(bed) < total * 1000 + 2000:
+                try:
+                    bed += AudioSegment.from_file(tracks[ti % len(tracks)])
+                except Exception as e:
+                    print(f"[assemble] music track skipped: {e}")
+                ti += 1
+                if ti > 50:
+                    break
+            bed = bed[:int(total * 1000)].apply_gain(MUSIC_GAIN)
+            bed = bed.fade_in(2500).fade_out(3500)
+            mix = mix.overlay(bed)
+            print(f"[assemble] music bed: {ti} track loops at {MUSIC_GAIN} dB")
+        else:
+            print("[assemble] no music library — narration only")
+        mix.export(mixed_path, format="wav")
     except Exception as e:
-        print(f"[assemble] SFX skipped ({e}) — using plain narration")
-        mixed = narration
+        print(f"[assemble] audio mix fallback ({e})")
+        mixed_path = narration
 
     final = os.path.join(BASE, "work", "final.mp4")
-    run(["ffmpeg", "-y", "-v", "error", "-i", silent, "-i", mixed,
+    run(["ffmpeg", "-y", "-v", "error", "-i", silent, "-i", mixed_path,
          "-map", "0:v", "-map", "1:a",
-         "-c:v", "copy", "-c:a", "aac", "-b:a", "160k",
-         "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
+         "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+         "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
          "-movflags", "+faststart", "-shortest", final])
     print(f"[assemble] DONE -> work/final.mp4 ({ffdur(final)/60:.1f} min)")
 

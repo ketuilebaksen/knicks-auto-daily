@@ -106,6 +106,42 @@ def thumbnail(title_lines, out):
         y += 168
     img.save(out, quality=92)
 
+def intro_card(out):
+    import datetime
+    img = bg(4242)
+    d = ImageDraw.Draw(img, "RGBA")
+    d.rectangle([0, 0, W, 10], fill=ORANGE)
+    d.rectangle([0, H - 10, W, H], fill=ORANGE)
+    tf = font("Anton-Regular.ttf", 190)
+    for li, (txt, col) in enumerate([("NY KNICKS", WHITE), ("DAILY", ORANGE)]):
+        w_ = d.textlength(txt, font=tf)
+        d.text(((W - w_) / 2, 250 + li * 220), txt, font=tf, fill=col,
+               stroke_width=8, stroke_fill=(0, 0, 0))
+    kf = font("Oswald-Var.ttf", 58)
+    date_s = datetime.date.today().strftime("%B %d, %Y").upper()
+    w_ = d.textlength(date_s, font=kf)
+    d.rectangle([(W - w_) / 2 - 30, 740, (W + w_) / 2 + 30, 740 + 88],
+                fill=(0, 0, 0, 210))
+    d.text(((W - w_) / 2, 752), date_s, font=kf, fill=GREY)
+    img.save(out, quality=92)
+
+def outro_card(out):
+    img = bg(777)
+    d = ImageDraw.Draw(img, "RGBA")
+    d.rectangle([0, 0, W, 10], fill=ORANGE)
+    d.rectangle([0, H - 10, W, H], fill=ORANGE)
+    tf = font("Anton-Regular.ttf", 130)
+    for li, (txt, col) in enumerate([("THANKS FOR WATCHING", WHITE),
+                                     ("SUBSCRIBE", ORANGE)]):
+        w_ = d.textlength(txt, font=tf)
+        d.text(((W - w_) / 2, 300 + li * 200), txt, font=tf, fill=col,
+               stroke_width=7, stroke_fill=(0, 0, 0))
+    kf = font("Oswald-Var.ttf", 54)
+    tag = "NEW KNICKS VIDEO EVERY DAY"
+    w_ = d.textlength(tag, font=kf)
+    d.text(((W - w_) / 2, 760), tag, font=kf, fill=GREY)
+    img.save(out, quality=92)
+
 def main():
     with open(sys.argv[1]) as f:
         script = json.load(f)
@@ -120,9 +156,18 @@ def main():
             card(1000 + idx * 7, sec["heading"], title, lines,
                  idx + 1, total, os.path.join(out_dir, f"c_{idx:04d}.jpg"))
             idx += 1
-    thumbnail(script.get("thumbnail_lines") or [script["title"][:20]],
-              os.path.join(BASE, "work", "thumbnail.jpg"))
-    print(f"[visuals] {idx} cards + thumbnail -> work/cards/")
+    out_thumb = os.path.join(BASE, "work", "thumbnail.jpg")
+    if os.path.exists(os.path.join(A, "thumb_base.jpg")):
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from thumbnail import make_thumb
+        player = os.path.join(BASE, "work", "thumb_player.png")
+        make_thumb(script.get("thumb_word") or "BREAKING NEWS!",
+                   player if os.path.exists(player) else None, out_thumb)
+    else:
+        thumbnail(script.get("thumbnail_lines") or [script["title"][:20]], out_thumb)
+    intro_card(os.path.join(BASE, "work", "intro.jpg"))
+    outro_card(os.path.join(BASE, "work", "outro.jpg"))
+    print(f"[visuals] {idx} cards + intro/outro + thumbnail -> work/cards/")
 
 if __name__ == "__main__":
     main()

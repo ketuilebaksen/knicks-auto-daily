@@ -22,10 +22,24 @@ MODEL = os.environ.get("MODEL", "claude-sonnet-4-5")
 MINUTES = int(os.environ.get("TARGET_MINUTES", "30"))
 WORDS = MINUTES * 150  # ~150 wpm narration
 
+TITLE_GUIDE = """
+TITLE STYLE (match the channel's proven patterns):
+- News-heavy day (trades, signings, rumors) -> hype style: ALL CAPS, exclamation,
+  mystery subject. Examples: "MASSIVE TRADE! NOBODY COULD BELIEVE HE'S NOW A KNICK!",
+  "Knicks TARGETING Bucks 7-Footer?! TRADE Rumors EXPLAINED! Knicks News Today"
+- Analysis/story day -> documentary style: "The X That Y" / "How ..." with ONE
+  power word in CAPS and a concrete number. Examples:
+  "The $104M Mistake That Cost Dallas An NBA Title",
+  "How a Short Unwanted Jalen Brunson REVIVED The New York Knicks",
+  "How did the Knicks Win when the Spurs Controlled 72% of the Finals?"
+- Always include a number, a name, or a mystery hook. Never bland titles.
+"""
+
 SCHEMA_HINT = """
 Return ONE JSON object inside a ```json fenced block, exactly this shape:
 {
  "title": "<=95 char clickable title",
+ "thumb_word": "ONE short punchy thumbnail phrase, 1-3 words, ALL CAPS with '!', e.g. BREAKING NEWS! / URGENT UPDATE! / SCARY! / CRAZY TRADE! / HE'S GONE?!",
  "thumbnail_lines": ["MAX 3 LINES", "SHORT PUNCHY", "ALL CAPS"],
  "sections": [
    {"heading": "SHORT SECTION TITLE",
@@ -49,9 +63,18 @@ news: trades, rumors, injuries, quotes, games (if in season, yesterday's game is
 lead story), Summer League, roster analysis. Check multiple sources (ESPN, SNY,
 New York Post, HoopsHype, RealGM). If news is thin, add one deep-dive topic
 (roster analysis, historical Knicks story, player profile, season projection).
+Blend in commentary and opinion, and where natural connect today's stories to
+history: past transfers, training camps, game preparations, players' career
+arcs and iconic Knicks moments. Make it feel like an expert host talking.
 
 AVOID repeating these recent topics:
 {recent_topics or "(none)"}
+
+CONTENT MIX: today's news is the spine of the episode, but you are a commentator,
+not a news reader — give YOUR analysis and opinions on every story. Weave in
+historical context where it fits: past trades and how they aged, training camp
+and game-prep storylines, players' career histories and personal journeys,
+franchise history parallels. Connect today to the bigger picture.
 
 Then write an energetic, conversational ~{WORDS}-word English narration script
 (target {MINUTES} minutes at ~150 wpm). Short sentences. No abbreviations that read
@@ -59,6 +82,7 @@ badly aloud (say "points per game", not "PPG"). 6-9 sections, 45-60 paragraphs t
 60-110 words each. EVERY paragraph must have card_title and card_lines filled.
 Total word count across all paragraph texts MUST be between {WORDS-500} and {WORDS+300}.
 
+{TITLE_GUIDE}
 {SCHEMA_HINT}
 Output ONLY the fenced JSON block, no other prose after your research."""
 

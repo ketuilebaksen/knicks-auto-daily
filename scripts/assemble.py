@@ -23,6 +23,10 @@ NARR_GAIN = float(os.environ.get("NARR_GAIN", "12.0"))     # dB
 MUSIC_GAIN = float(os.environ.get("MUSIC_GAIN", "-18.5"))  # dB
 SFX_GAIN = float(os.environ.get("SFX_GAIN", "-15"))        # dB
 MAX_SFX = int(os.environ.get("MAX_SFX", "5"))
+CRF_CUT = os.environ.get("CRF_CUT", "16")      # b-roll cuts (lower = sharper)
+CRF_PHOTO = os.environ.get("CRF_PHOTO", "16")
+PRESET = os.environ.get("X264_PRESET", "fast")
+SHARPEN = os.environ.get("SHARPEN", "0") == "1"  # off: keep source look
 OVERLAY_KINDS = ["speech", "lower3", "comic", "chat"]
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -72,8 +76,11 @@ class Broll:
         return f, self.rng.uniform(0, max(0.0, d - need - 0.2))
 
 def broll_cut(src, start, dur, out, caption=None, big_word=None, flash=True):
-    vf = ["scale=1920:1080:force_original_aspect_ratio=increase:flags=lanczos",
-          "crop=1920:1080", "unsharp=3:3:0.35:3:3:0.0", f"fps={FPS}"]
+    vf = ["scale=1920:1080:force_original_aspect_ratio=increase:"
+          "flags=lanczos+accurate_rnd+full_chroma_int",
+          "crop=1920:1080", f"fps={FPS}"]
+    if SHARPEN:
+        vf.insert(2, "unsharp=3:3:0.3:3:3:0.0")
     # transition flash disabled (owner preference)
     if caption:
         vf.append(
@@ -87,14 +94,15 @@ def broll_cut(src, start, dur, out, caption=None, big_word=None, flash=True):
             f"borderw=7:bordercolor=black@0.85:alpha='min(1,t/0.22)'")
     run(["ffmpeg", "-y", "-v", "error", "-ss", f"{start:.2f}", "-i", src,
          "-t", f"{dur:.3f}", "-vf", ",".join(vf), "-r", str(FPS),
-         "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+         "-c:v", "libx264", "-preset", PRESET, "-crf", CRF_CUT,
+         "-x264-params", "aq-mode=3:psy-rd=1.0",
          "-pix_fmt", "yuv420p", "-an", out])
 
 def photo_segment(img, dur, out, caption=None):
     frames = max(2, round(dur * FPS))
     # slow, professional ken-burns: 1.00 -> 1.08 across the whole segment
     z = f"min(1+0.08*on/{frames},1.08)"
-    vf = (f"scale=2400:-2:flags=lanczos,crop=2400:1350,"
+    vf = (f"scale=2400:-2:flags=lanczos+accurate_rnd,crop=2400:1350,"
           f"zoompan=z='{z}':d={frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
           f":s=1920x1080:fps={FPS},format=yuv420p")
     if caption:
@@ -104,7 +112,7 @@ def photo_segment(img, dur, out, caption=None):
                f"shadowx=3:shadowy=3:shadowcolor=black@0.5")
     run(["ffmpeg", "-y", "-v", "error", "-loop", "1", "-i", img,
          "-vf", vf, "-t", f"{dur:.3f}", "-r", str(FPS),
-         "-c:v", "libx264", "-preset", "fast", "-crf", "19",
+         "-c:v", "libx264", "-preset", PRESET, "-crf", CRF_PHOTO,
          "-pix_fmt", "yuv420p", "-an", out])
 
 def card_segment(card, dur, idx, out, overlay=None):
@@ -173,7 +181,7 @@ def apply_overlay(vin, overlay, vout, idx=0):
         fc = f"[0:v][1:v]overlay=x={x}:y='{yex}':enable='gte(t,{at:.2f})'[vo]"
     run(["ffmpeg", "-y", "-v", "error", "-i", vin, "-i", png,
          "-filter_complex", fc, "-map", "[vo]",
-         "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-an", vout])
+         "-c:v", "libx264", "-preset", PRESET, "-crf", CRF_CUT, "-an", vout])
 
 def make_overlay_png(kind, para, sec, i):
     import overlays as OV

@@ -38,8 +38,9 @@ def main():
     video = os.path.join(BASE, "work", "final.mp4")
     # manual thumbnail wins: drop content/current/thumbnail.jpg into the repo
     manual_thumb = os.path.join(BASE, "content", "current", "thumbnail.jpg")
-    thumb = manual_thumb if os.path.exists(manual_thumb) else \
-        os.path.join(BASE, "work", "thumbnail.jpg")
+    auto_yt = os.path.join(BASE, "work", "thumbnail_yt.jpg")
+    auto = auto_yt if os.path.exists(auto_yt) else os.path.join(BASE, "work", "thumbnail.jpg")
+    thumb = manual_thumb if os.path.exists(manual_thumb) else auto
     desc = meta["description"]
     credits_f = os.path.join(BASE, "work", "photo_credits.txt")
     if os.path.exists(credits_f):

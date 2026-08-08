@@ -157,13 +157,13 @@ def main():
                  idx + 1, total, os.path.join(out_dir, f"c_{idx:04d}.jpg"))
             idx += 1
     out_thumb = os.path.join(BASE, "work", "thumbnail.jpg")
-    if os.path.exists(os.path.join(A, "thumb_base.jpg")):
+    try:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-        from thumbnail import make_thumb
-        player = os.path.join(BASE, "work", "thumb_player.png")
-        make_thumb(script.get("thumb_word") or "BREAKING NEWS!",
-                   player if os.path.exists(player) else None, out_thumb)
-    else:
+        from thumbnail import make_thumb, players_from_script, word_for_today
+        make_thumb(script.get("thumb_word") or word_for_today(script),
+                   players_from_script(script), out_thumb)
+    except Exception as e:
+        print(f"[visuals] cinematic thumbnail failed ({e}) — fallback")
         thumbnail(script.get("thumbnail_lines") or [script["title"][:20]], out_thumb)
     intro_card(os.path.join(BASE, "work", "intro.jpg"))
     outro_card(os.path.join(BASE, "work", "outro.jpg"))

@@ -16,7 +16,8 @@ import datetime, glob, json, os, random, re, subprocess, sys
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FPS = 24
 FONT = os.path.join(BASE, "assets", "Anton-Regular.ttf")
-CUT_LEN = 2.8            # seconds per hook cut
+CUT_LEN = 2.8            # seconds per hook cut (fast)
+BODY_CUT = 3.4           # seconds per body cut (calmer, professional)
 BODY_BROLL_EVERY = 4     # every Nth body paragraph -> b-roll interlude
 NARR_GAIN = float(os.environ.get("NARR_GAIN", "12.0"))     # dB
 MUSIC_GAIN = float(os.environ.get("MUSIC_GAIN", "-18.5"))  # dB
@@ -57,8 +58,10 @@ class Broll:
             if d >= 3.0:
                 self.clips.append((f, d))
         self.rng.shuffle(self.clips)
-        self.i = 0
-        print(f"[assemble] b-roll: {len(self.clips)} clips")
+        # start each day at a different point so consecutive videos don't
+        # reuse the same clips in the same spots
+        self.i = (datetime.date.today().toordinal() * 37) % max(1, len(self.clips))
+        print(f"[assemble] b-roll: {len(self.clips)} clips (offset {self.i})")
 
     def any(self):
         return len(self.clips) > 0
@@ -142,6 +145,64 @@ def card_segment(card, dur, idx, out, overlay=None):
             "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-an", out]
     run(cmd)
 
+
+def apply_overlay(vin, overlay, vout, idx=0):
+    """Second pass: composite a bubble PNG (bounce/pop) onto a rendered segment."""
+    png, kind, at, bw, bh = (overlay["png"], overlay["kind"], overlay["at"],
+                             overlay["w"], overlay["h"])
+    if kind == "comic":
+        x = (1920 - bw) // 2 + (170 if idx % 2 == 0 else -170)
+        y = max(60, (1080 - bh) // 2 - 190)
+        fc = (f"[0:v][1:v]overlay=x={x}:y={y}:enable='gte(t,{at + 0.18:.2f})'[vo];"
+              f"[1:v]scale=iw*0.55:-1[c1];[1:v]scale=iw*1.18:-1[c2]")
+        fc = (f"[1:v]scale=iw*0.55:-1[c1];[1:v]scale=iw*1.18:-1[c2];"
+              f"[0:v][c1]overlay=x={x + int(bw*0.22)}:y={y + int(bh*0.22)}:"
+              f"enable='between(t,{at:.2f},{at + 0.09:.2f})'[t1];"
+              f"[t1][c2]overlay=x={x - int(bw*0.09)}:y={y - int(bh*0.09)}:"
+              f"enable='between(t,{at + 0.09:.2f},{at + 0.18:.2f})'[t2];"
+              f"[t2][1:v]overlay=x={x}:y={y}:enable='gte(t,{at + 0.18:.2f})'[vo]")
+    else:
+        if kind == "chat":
+            x, yt = 1920 - bw - 140, 470
+        elif kind == "lower3":
+            x, yt = 110, 1080 - bh - 210
+        else:
+            x, yt = 140, 520
+        yex = f"{yt}+340*exp(-7.5*(t-{at:.2f}))*cos(9*(t-{at:.2f}))"
+        fc = f"[0:v][1:v]overlay=x={x}:y='{yex}':enable='gte(t,{at:.2f})'[vo]"
+    run(["ffmpeg", "-y", "-v", "error", "-i", vin, "-i", png,
+         "-filter_complex", fc, "-map", "[vo]",
+         "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-an", vout])
+
+def make_overlay_png(kind, para, sec, i):
+    import overlays as OV
+    ov_dir = os.path.join(BASE, "work", "overlays")
+    os.makedirs(ov_dir, exist_ok=True)
+    png = os.path.join(ov_dir, f"o_{i:04d}.png")
+    lines = para.get("card_lines") or [para.get("card_title", "")]
+    txt = lines[-1] if len(lines) > 1 else lines[0]
+    if kind == "comic":
+        word = re.sub(r"[^A-Za-z ]", "", str(para.get("card_title", ""))).split()
+        word = (word[0].upper() + "!") if word else "BOOM!"
+        w_, h_ = OV.comic_burst(word[:14], png)
+    elif kind == "lower3":
+        w_, h_ = OV.lower_third(para.get("card_title", ""), sec["heading"], png)
+    elif kind == "chat":
+        w_, h_ = OV.speech_bubble(txt, png, chat=True)
+    else:
+        w_, h_ = OV.speech_bubble(txt, png, chat=False)
+    return {"png": png, "kind": kind, "w": w_, "h": h_}
+
+def photo_lookup(photos):
+    """map lowercase last-name -> photo path (from photo filenames)."""
+    m = {}
+    for f in photos:
+        stem = os.path.splitext(os.path.basename(f))[0]
+        key = stem.split("_")[-1].lower()
+        if len(key) >= 4:
+            m[key] = f
+    return m
+
 def make_intro(broll, seg_dir):
     """Fast branded opener: 2 flash cuts + title card. Returns (files, duration)."""
     files, d_total = [], 0.0
@@ -202,8 +263,8 @@ def main():
     rng = random.Random(datetime.date.today().toordinal() * 6151 + len(paras))
     broll = Broll(rng)
     photos = media_lib("photos", ("*.jpg", "*.jpeg", "*.png", "*.webp"))
-    rng.shuffle(photos)
-    pi_idx = 0
+    pmap = photo_lookup(photos)
+    print(f"[assemble] photo library: {len(photos)} ({list(pmap)[:6]}...)")
     seg_dir = os.path.join(BASE, "work", "segs")
     os.makedirs(seg_dir, exist_ok=True)
 
@@ -224,8 +285,17 @@ def main():
         fresh = not (os.path.exists(seg) and os.path.getsize(seg) > 5000)
 
         is_hook = (si == 0) and broll.any()
-        is_clip_break = (si > 0) and broll.any() and (i % BODY_BROLL_EVERY == 2)
-        is_photo_break = (si > 0) and photos and (i % BODY_BROLL_EVERY == 0) and i > 0
+
+        # decide overlay for this paragraph (counters advance even on cache)
+        ov_kind = None
+        if not is_hook:
+            if it["para"] == 0 and si > 0:
+                ov_kind = "lower3"          # chapter marker on every section start
+                last_popup_t = t0
+            elif dur >= 8 and (t0 - last_popup_t) >= 25 and para.get("card_lines"):
+                ov_kind = OVERLAY_KINDS[ov_slot % len(OVERLAY_KINDS)]
+                ov_slot += 1
+                last_popup_t = t0
 
         if is_hook:
             cuts = max(1, round(dur / CUT_LEN))
@@ -240,7 +310,7 @@ def main():
                         big = para["card_lines"][0]
                     broll_cut(src, start, cut_d, part,
                               caption=para.get("card_title") if k == 0 else None,
-                              big_word=big, flash=True)
+                              big_word=big)
                 parts.append(f"file '{part}'")
             if fresh:
                 lst = os.path.join(seg_dir, f"h_{i:04d}.txt")
@@ -248,48 +318,51 @@ def main():
                     f.write("\n".join(parts) + "\n")
                 run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0",
                      "-i", lst, "-c", "copy", seg])
-        elif is_photo_break:
-            img = photos[pi_idx % len(photos)]
-            pi_idx += 1
-            if fresh:
-                photo_segment(img, dur, seg, caption=para.get("card_title"))
-        elif is_clip_break:
-            if fresh:
-                src, start = broll.pick(dur)
-                broll_cut(src, start, dur, seg,
-                          caption=para.get("card_title") or sec["heading"], flash=True)
         else:
-            overlay = None
-            if dur >= 5 and (t0 - last_popup_t) >= 10 and para.get("card_lines"):
-                kind = OVERLAY_KINDS[ov_slot % len(OVERLAY_KINDS)]
-                ov_slot += 1
-                last_popup_t = t0
-                if fresh:
-                    ov_dir = os.path.join(BASE, "work", "overlays")
-                    os.makedirs(ov_dir, exist_ok=True)
-                    png = os.path.join(ov_dir, f"o_{i:04d}.png")
-                    lines = para["card_lines"]
-                    txt = lines[-1] if len(lines) > 1 else lines[0]
+            # FOOTAGE-ONLY body: player photo insert (if named) + calm b-roll cuts
+            if fresh and broll.any():
+                parts = []
+                remaining = dur
+                ptext = (str(para.get("text", "")) + " " +
+                         str(para.get("card_title", ""))).lower()
+                photo = None
+                for key, path in pmap.items():
+                    if key in ptext:
+                        photo = path
+                        break
+                if photo and remaining > 5.5:
+                    pd = min(6.0, remaining * 0.5)
+                    pp = os.path.join(seg_dir, f"b_{i:04d}_photo.mp4")
+                    photo_segment(photo, pd, pp, caption=para.get("card_title"))
+                    parts.append(pp)
+                    remaining -= pd
+                ncuts = max(1, round(remaining / BODY_CUT))
+                cd = remaining / ncuts
+                for k in range(ncuts):
+                    bp = os.path.join(seg_dir, f"b_{i:04d}_{k}.mp4")
+                    src, start = broll.pick(cd)
+                    broll_cut(src, start, cd, bp,
+                              caption=para.get("card_title")
+                              if (k == 0 and not photo) else None)
+                    parts.append(bp)
+                if ov_kind:
                     try:
-                        import overlays as OV
-                        if kind == "comic":
-                            word = re.sub(r"[^A-Za-z ]", "",
-                                          str(para.get("card_title", ""))).split()
-                            word = (word[0].upper() + "!") if word else "BOOM!"
-                            w_, h_ = OV.comic_burst(word[:14], png)
-                        elif kind == "lower3":
-                            w_, h_ = OV.lower_third(para.get("card_title", ""),
-                                                    sec["heading"], png)
-                        elif kind == "chat":
-                            w_, h_ = OV.speech_bubble(txt, png, chat=True)
-                        else:
-                            w_, h_ = OV.speech_bubble(txt, png, chat=False)
-                        overlay = {"png": png, "kind": kind, "w": w_, "h": h_,
-                                   "at": max(1.0, dur * 0.4)}
+                        ov = make_overlay_png(ov_kind, para, sec, i)
+                        first_d = ffdur(parts[0])
+                        ov["at"] = (0.8 if ov_kind == "lower3"
+                                    else max(0.9, min(first_d - 1.2, first_d * 0.4)))
+                        tmp = parts[0].replace(".mp4", "_ov.mp4")
+                        apply_overlay(parts[0], ov, tmp, i)
+                        parts[0] = tmp
                     except Exception as e:
                         print(f"[assemble] overlay skipped ({e})")
-            if fresh:
-                card_segment(card, dur, i, seg, overlay=overlay)
+                lst = os.path.join(seg_dir, f"b_{i:04d}.txt")
+                with open(lst, "w") as f:
+                    f.write("\n".join(f"file '{p}'" for p in parts) + "\n")
+                run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0",
+                     "-i", lst, "-c", "copy", seg])
+            elif fresh:
+                card_segment(card, dur, i, seg)   # no-broll fallback only
         if i % 10 == 0:
             print(f"[assemble] segment {i+1}/{n}", flush=True)
 

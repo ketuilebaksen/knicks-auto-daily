@@ -29,6 +29,12 @@ def yt():
 def main():
     with open(sys.argv[1]) as f:
         meta = json.load(f)
+    if meta.get("privacy") == "skip":
+        with open("upload_result.json", "w") as f:
+            json.dump({"skipped": True,
+                       "note": "upload skipped (privacy=skip) — download video from Artifacts"}, f)
+        print("[upload] SKIPPED by request — video only in Artifacts")
+        return
     video = os.path.join(BASE, "work", "final.mp4")
     # manual thumbnail wins: drop content/current/thumbnail.jpg into the repo
     manual_thumb = os.path.join(BASE, "content", "current", "thumbnail.jpg")

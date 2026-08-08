@@ -56,7 +56,16 @@ Return ONE JSON object inside a ```json fenced block, exactly this shape:
 }
 """
 
-def build_prompt(today, recent_topics):
+SLOT_ANGLES = {
+ "early": "Lead with today's hard news and reporting: trades, rumours, injuries, "
+          "quotes, game recaps. Newsroom energy.",
+ "late":  "This is the SECOND episode of the day, so do NOT repeat the morning's "
+          "news beat. Lead with a deeper angle: analysis, a historical story, a "
+          "player's journey, tactics, a season projection, or a big-picture debate. "
+          "Reference today's news only briefly if it matters.",
+}
+
+def build_prompt(today, recent_topics, slot="early"):
     return f"""Today is {today}. You write the daily episode for "NY Knicks Daily",
 a faceless YouTube channel. Use web search NOW to research today's New York Knicks
 news: trades, rumors, injuries, quotes, games (if in season, yesterday's game is the
@@ -66,6 +75,8 @@ New York Post, HoopsHype, RealGM). If news is thin, add one deep-dive topic
 Blend in commentary and opinion, and where natural connect today's stories to
 history: past transfers, training camps, game preparations, players' career
 arcs and iconic Knicks moments. Make it feel like an expert host talking.
+
+EPISODE ANGLE: {SLOT_ANGLES[slot]}
 
 AVOID repeating these recent topics:
 {recent_topics or "(none)"}
@@ -108,8 +119,11 @@ def main():
     if os.path.exists(LOG):
         recent = "\n".join(open(LOG).read().strip().splitlines()[-14:])
 
+    import datetime as _dt
+    slot = "early" if _dt.datetime.utcnow().hour < 16 else "late"
+    print(f"[generate] slot: {slot}")
     client = anthropic.Anthropic()
-    prompt = build_prompt(today, recent)
+    prompt = build_prompt(today, recent, slot)
     for attempt in range(3):
         with client.messages.stream(
             model=MODEL, max_tokens=32000,
@@ -139,12 +153,13 @@ def main():
         h, m = map(int, pub_hhmm.split(":"))
         now = datetime.datetime.utcnow()
         target = now.replace(hour=h, minute=m, second=0, microsecond=0)
-        if target > now + datetime.timedelta(minutes=10):
-            meta_out["publish_at"] = target.strftime("%Y-%m-%dT%H:%M:%SZ")
+        if target <= now + datetime.timedelta(minutes=15):
+            target += datetime.timedelta(days=1)      # missed the slot -> next day
+        meta_out["publish_at"] = target.strftime("%Y-%m-%dT%H:%M:%SZ")
     with open(os.path.join(CUR, "meta.json"), "w") as f:
         json.dump(meta_out, f, indent=1, ensure_ascii=False)
     with open(LOG, "a") as f:
-        f.write(f"{today}: {d['title']}\n")
+        f.write(f"{today} [{slot}]: {d['title']}\n")
     print(f"[generate] OK — {words} words, {n_para} paragraphs: {d['title']}")
 
 if __name__ == "__main__":

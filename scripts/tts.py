@@ -67,6 +67,51 @@ def pick_voice(key):
             return v
     return DEFAULT_VOICE_ID
 
+
+GOOGLE_API = "https://texttospeech.googleapis.com/v1/text:synthesize"
+
+def google_voice():
+    """Pick the voice for this slot (two different hosts per day)."""
+    import datetime
+    late = datetime.datetime.utcnow().hour >= 16
+    default = "en-US-Chirp3-HD-Charon" if not late else "en-US-Chirp3-HD-Fenrir"
+    return os.environ.get("GOOGLE_VOICE_LATE" if late else "GOOGLE_VOICE_EARLY",
+                          os.environ.get("GOOGLE_VOICE", default))
+
+def synth_google(text, out, key, voice):
+    import base64, urllib.error
+    body = {
+        "input": {"text": text},
+        "voice": {"languageCode": "-".join(voice.split("-")[:2]), "name": voice},
+        "audioConfig": {"audioEncoding": "MP3", "sampleRateHertz": 44100,
+                        "speakingRate": float(os.environ.get("TTS_RATE", "1.0"))},
+    }
+    for attempt in range(4):
+        try:
+            req = urllib.request.Request(
+                f"{GOOGLE_API}?key={key}",
+                data=json.dumps(body).encode(),
+                headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=180) as r:
+                data = json.load(r)
+            with open(out, "wb") as f:
+                f.write(base64.b64decode(data["audioContent"]))
+            return
+        except urllib.error.HTTPError as e:
+            msg = ""
+            try:
+                msg = e.read().decode()[:300]
+            except Exception:
+                pass
+            print(f"[tts] google HTTP {e.code}: {msg}", flush=True)
+            if e.code in (400, 401, 403) or attempt == 3:
+                raise SystemExit(f"[tts] google fatal: {e.code} {msg}")
+            time.sleep(4 * (attempt + 1))
+        except Exception as e:
+            if attempt == 3:
+                raise
+            time.sleep(4 * (attempt + 1))
+
 def synth_eleven(text, out, key, voice_id):
     body = {"text": text,
             "model_id": os.environ.get("ELEVEN_MODEL", "eleven_flash_v2_5"),
@@ -89,10 +134,13 @@ def main():
     with open(sys.argv[1]) as f:
         script = json.load(f)
     key = os.environ.get("ELEVEN_API_KEY", "").strip()
-    engine = os.environ.get("TTS_ENGINE") or ("eleven" if key else "piper")
-    ext = "mp3" if engine == "eleven" else "wav"
+    gkey = os.environ.get("GOOGLE_TTS_KEY", "").strip()
+    engine = os.environ.get("TTS_ENGINE") or (
+        "google" if gkey else ("eleven" if key else "piper"))
+    ext = "wav" if engine == "piper" else "mp3"
     voice_id = pick_voice(key) if engine == "eleven" else None
-    print(f"[tts] engine: {engine}")
+    gvoice = google_voice() if engine == "google" else None
+    print(f"[tts] engine: {engine}" + (f" voice: {gvoice}" if gvoice else ""))
 
     audio_dir = os.path.join(BASE, "work", "audio")
     os.makedirs(audio_dir, exist_ok=True)
@@ -110,7 +158,9 @@ def main():
         for pi, para in enumerate(sec["paragraphs"]):
             out = os.path.join(audio_dir, f"p_{idx:04d}.{ext}")
             if not (os.path.exists(out) and os.path.getsize(out) > 1000):
-                if engine == "eleven":
+                if engine == "google":
+                    synth_google(para["text"].strip(), out, gkey, gvoice)
+                elif engine == "eleven":
                     synth_eleven(para["text"].strip(), out, key, voice_id)
                 else:
                     synth_piper(para["text"].strip(), out)

@@ -32,6 +32,7 @@ jobs:
 
       - name: TTS
         env:
+          GOOGLE_TTS_KEY: ${{ secrets.GOOGLE_TTS_KEY }}
           ELEVEN_API_KEY: ${{ secrets.ELEVEN_API_KEY }}
           ELEVEN_VOICE: ${{ vars.ELEVEN_VOICE || 'alex' }}
           ELEVEN_MODEL: ${{ vars.ELEVEN_MODEL || 'eleven_flash_v2_5' }}

@@ -1,7 +1,8 @@
 name: daily-video
 on:
   schedule:
-    - cron: "0 13 * * *"   # 12:00 UTC = 15:00 Istanbul; video live ~16:00
+    - cron: "0 13 * * *"     # 16:00 Istanbul -> publishes 18:00
+    - cron: "0 18 * * *"     # 21:00 Istanbul -> publishes 23:00
   workflow_dispatch:
     inputs:
       privacy:
@@ -38,7 +39,13 @@ jobs:
           MODEL: ${{ vars.MODEL || 'claude-sonnet-4-5' }}
           TARGET_MINUTES: ${{ vars.TARGET_MINUTES || '30' }}
           PRIVACY: ${{ inputs.privacy || 'public' }}
-        run: python3 scripts/generate.py
+        run: |
+          # slot 1 (early run) publishes 18:00 Istanbul = 15:00 UTC
+          # slot 2 (late run)  publishes 23:00 Istanbul = 20:00 UTC
+          H=$(date -u +%H)
+          if [ "$H" -lt 16 ]; then export PUBLISH_UTC=15:00; else export PUBLISH_UTC=20:00; fi
+          echo "publish slot -> $PUBLISH_UTC UTC"
+          python3 scripts/generate.py
 
       - name: Commit content
         run: |
@@ -54,6 +61,7 @@ jobs:
 
       - name: TTS
         env:
+          GOOGLE_TTS_KEY: ${{ secrets.GOOGLE_TTS_KEY }}
           ELEVEN_API_KEY: ${{ secrets.ELEVEN_API_KEY }}
           ELEVEN_VOICE: ${{ vars.ELEVEN_VOICE || 'alex' }}
           ELEVEN_MODEL: ${{ vars.ELEVEN_MODEL || 'eleven_flash_v2_5' }}

@@ -19,6 +19,17 @@ ORANGE = (245, 132, 38)   # Knicks orange
 WHITE  = (244, 246, 252)
 GREY   = (150, 160, 185)
 
+try:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import channel as CH
+    BRAND = CH.get("name", "NY KNICKS DAILY")
+    OUTRO_TAG = CH.get("outro_tag", "NEW KNICKS VIDEO EVERY DAY")
+    _pal = CH.get("palette", {})
+    ORANGE = tuple(_pal.get("primary", ORANGE))
+    BLUE = tuple(_pal.get("secondary", BLUE))
+except Exception:
+    BRAND, OUTRO_TAG = "NY KNICKS DAILY", "NEW KNICKS VIDEO EVERY DAY"
+
 def font(name, size):
     return ImageFont.truetype(os.path.join(A, name), size)
 
@@ -61,8 +72,8 @@ def draw_common(d, kicker, page, total):
     # top brand bar
     d.rectangle([0, 0, W, 8], fill=ORANGE)
     kf = font("Oswald-Var.ttf", 44)
-    d.text((90, 52), "NY KNICKS DAILY", font=kf, fill=ORANGE)
-    kw = d.textlength("NY KNICKS DAILY", font=kf)
+    d.text((90, 52), BRAND, font=kf, fill=ORANGE)
+    kw = d.textlength(BRAND, font=kf)
     d.text((90 + kw + 28, 52), kicker.upper(), font=kf, fill=GREY)
     # progress
     pf = font("Oswald-Var.ttf", 36)
@@ -96,7 +107,7 @@ def thumbnail(title_lines, out):
     d.rectangle([0, 0, 1280, 10], fill=ORANGE)
     d.rectangle([0, 710, 1280, 720], fill=ORANGE)
     kf = font("Oswald-Var.ttf", 54)
-    d.text((60, 44), "NY KNICKS DAILY", font=kf, fill=ORANGE)
+    d.text((60, 44), BRAND, font=kf, fill=ORANGE)
     tf = font("Anton-Regular.ttf", 128)
     y = 200
     for ln in title_lines[:3]:
@@ -113,7 +124,8 @@ def intro_card(out):
     d.rectangle([0, 0, W, 10], fill=ORANGE)
     d.rectangle([0, H - 10, W, H], fill=ORANGE)
     tf = font("Anton-Regular.ttf", 190)
-    for li, (txt, col) in enumerate([("NY KNICKS", WHITE), ("DAILY", ORANGE)]):
+    parts = BRAND.split(" ", 1) if " " in BRAND else [BRAND, ""]
+    for li, (txt, col) in enumerate([(parts[0], WHITE), (parts[1], ORANGE)]):
         w_ = d.textlength(txt, font=tf)
         d.text(((W - w_) / 2, 250 + li * 220), txt, font=tf, fill=col,
                stroke_width=8, stroke_fill=(0, 0, 0))
@@ -137,7 +149,7 @@ def outro_card(out):
         d.text(((W - w_) / 2, 300 + li * 200), txt, font=tf, fill=col,
                stroke_width=7, stroke_fill=(0, 0, 0))
     kf = font("Oswald-Var.ttf", 54)
-    tag = "NEW KNICKS VIDEO EVERY DAY"
+    tag = OUTRO_TAG
     w_ = d.textlength(tag, font=kf)
     d.text(((W - w_) / 2, 760), tag, font=kf, fill=GREY)
     img.save(out, quality=92)
@@ -157,14 +169,36 @@ def main():
                  idx + 1, total, os.path.join(out_dir, f"c_{idx:04d}.jpg"))
             idx += 1
     out_thumb = os.path.join(BASE, "work", "thumbnail.jpg")
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    made = False
+    engine = "template"
     try:
-        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-        from thumbnail import make_thumb, players_from_script, word_for_today
-        make_thumb(script.get("thumb_word") or word_for_today(script),
-                   players_from_script(script), out_thumb)
-    except Exception as e:
-        print(f"[visuals] cinematic thumbnail failed ({e}) — fallback")
-        thumbnail(script.get("thumbnail_lines") or [script["title"][:20]], out_thumb)
+        import channel as _CH
+        engine = _CH.get("thumb_engine", "ai")
+    except Exception:
+        engine = "ai"
+    if engine == "ai":
+        try:
+            import thumb_ai
+            raw = thumb_ai.generate(script.get("thumb_prompt"),
+                                    script.get("thumb_word"),
+                                    script.get("thumb_subject"))
+            if raw:
+                thumb_ai.finish(raw, out_thumb)
+                made = True
+        except Exception as e:
+            print(f"[visuals] AI thumbnail failed ({e})")
+    if not made:
+        try:
+            from thumbnail import make_thumb, players_from_script, word_for_today
+            _pd = os.path.join(BASE, "work", "photos")
+            _n = len(os.listdir(_pd)) if os.path.isdir(_pd) else 0
+            print(f"[visuals] photo library: {_n} files in work/photos")
+            make_thumb(script.get("thumb_word") or word_for_today(script),
+                       players_from_script(script), out_thumb)
+        except Exception as e:
+            print(f"[visuals] cinematic thumbnail failed ({e}) — basic fallback")
+            thumbnail(script.get("thumbnail_lines") or [script["title"][:20]], out_thumb)
     intro_card(os.path.join(BASE, "work", "intro.jpg"))
     outro_card(os.path.join(BASE, "work", "outro.jpg"))
     print(f"[visuals] {idx} cards + intro/outro + thumbnail -> work/cards/")

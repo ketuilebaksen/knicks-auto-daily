@@ -39,7 +39,9 @@ SCHEMA_HINT = """
 Return ONE JSON object inside a ```json fenced block, exactly this shape:
 {
  "title": "<=95 char clickable title",
- "thumb_word": "ONE short punchy thumbnail phrase, 1-3 words, ALL CAPS with '!', e.g. BREAKING NEWS! / URGENT UPDATE! / SCARY! / CRAZY TRADE! / HE'S GONE?!",
+ "thumb_word": "The punch phrase to render ON the thumbnail: 1-4 words, ALL CAPS, usually with '!'. Pull the single most dramatic fact from today's story, e.g. '3 DAYS DEADLINE!' / 'HE'S GONE?!' / '$212M GAMBLE!' / 'BREAKING NEWS!'",
+ "thumb_prompt": "One vivid sentence describing the thumbnail SCENE for an image generator: concrete objects and symbols that dramatise today's story (a torn contract on fire, a countdown clock on the jumbotron, an empty locker, a silhouette walking out of the tunnel, a cheque, an X over a player). Arena setting is implied - describe the props, mood and lighting, NOT any real person's face.",
+ "thumb_subject": "Short description of the player-like figure to feature, e.g. 'a determined point guard in a blue and orange number two jersey wearing a white headband'. Describe by role and uniform only, never by name.",
  "thumbnail_lines": ["MAX 3 LINES", "SHORT PUNCHY", "ALL CAPS"],
  "sections": [
    {"heading": "SHORT SECTION TITLE",
@@ -55,6 +57,23 @@ Return ONE JSON object inside a ```json fenced block, exactly this shape:
  }
 }
 """
+
+try:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import channel as CH
+    EDITORIAL = CH.get("editorial", "news")
+    BRAND = CH.get("name", "NY KNICKS DAILY")
+except Exception:
+    EDITORIAL, BRAND = "news", "NY KNICKS DAILY"
+
+DOC_BRIEF = """You are writing for a Knicks STORYTELLING channel, not a news desk.
+Do NOT report today's breaking news — the sister channel covers that. Instead pick
+ONE evergreen subject and tell it properly: a legend's career arc, a historic game
+or series, a franchise turning point, a tactical breakdown, a statistical deep dive,
+a 'what if this trade never happened' scenario, or a season retrospective.
+Tone: calm, authoritative, documentary. Build a narrative with a beginning, a
+turn and a payoff. Use concrete numbers and dates. No hype, no clickbait shouting.
+Titles must be analytical and intriguing, never ALL-CAPS screaming."""
 
 SLOT_ANGLES = {
  "early": "Lead with today's hard news and reporting: trades, rumours, injuries, "
@@ -124,6 +143,8 @@ def main():
     print(f"[generate] slot: {slot}")
     client = anthropic.Anthropic()
     prompt = build_prompt(today, recent, slot)
+    if EDITORIAL == "documentary":
+        prompt = prompt.replace(TITLE_GUIDE, "") + "\n\n" + DOC_BRIEF
     for attempt in range(3):
         with client.messages.stream(
             model=MODEL, max_tokens=32000,

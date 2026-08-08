@@ -38,9 +38,6 @@ jobs:
           ELEVEN_MODEL: ${{ vars.ELEVEN_MODEL || 'eleven_flash_v2_5' }}
         run: python3 scripts/tts.py content/current/script.json
 
-      - name: Visuals
-        run: python3 scripts/visuals.py content/current/script.json
-
       - name: Download media libraries
         env:
           GH_TOKEN: ${{ github.token }}
@@ -50,6 +47,15 @@ jobs:
           gh release download music -R "$GITHUB_REPOSITORY" -D work/music || echo "no music release"
           gh release download photos -R "$GITHUB_REPOSITORY" -D work/photos || echo "no photos release"
           python3 scripts/photos.py content/current/script.json || echo "auto photos skipped"
+
+      - name: Visuals
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_IMAGE_QUALITY: ${{ vars.OPENAI_IMAGE_QUALITY || 'high' }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GOOGLE_TTS_KEY: ${{ secrets.GOOGLE_TTS_KEY }}
+          IMAGE_MODEL: ${{ vars.IMAGE_MODEL }}
+        run: python3 scripts/visuals.py content/current/script.json
 
       - name: Sound effects
         run: python3 scripts/sfx.py

@@ -73,7 +73,7 @@ class Broll:
 
 def broll_cut(src, start, dur, out, caption=None, big_word=None, flash=True):
     vf = ["scale=1920:1080:force_original_aspect_ratio=increase:flags=lanczos",
-          "crop=1920:1080", "unsharp=5:5:0.4:5:5:0.0", f"fps={FPS}"]
+          "crop=1920:1080", "unsharp=3:3:0.35:3:3:0.0", f"fps={FPS}"]
     # transition flash disabled (owner preference)
     if caption:
         vf.append(
@@ -87,7 +87,7 @@ def broll_cut(src, start, dur, out, caption=None, big_word=None, flash=True):
             f"borderw=7:bordercolor=black@0.85:alpha='min(1,t/0.22)'")
     run(["ffmpeg", "-y", "-v", "error", "-ss", f"{start:.2f}", "-i", src,
          "-t", f"{dur:.3f}", "-vf", ",".join(vf), "-r", str(FPS),
-         "-c:v", "libx264", "-preset", "medium", "-crf", "18",
+         "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
          "-pix_fmt", "yuv420p", "-an", out])
 
 def photo_segment(img, dur, out, caption=None):
@@ -97,14 +97,15 @@ def photo_segment(img, dur, out, caption=None):
     vf = (f"scale=2400:-2:flags=lanczos,crop=2400:1350,"
           f"zoompan=z='{z}':d={frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
           f":s=1920x1080:fps={FPS},format=yuv420p")
-    cmd = ["ffmpeg", "-y", "-v", "error", "-loop", "1", "-i", img,
-           "-vf", vf, "-t", f"{dur:.3f}", "-r", str(FPS),
-           "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-an", out]
     if caption:
-        cmd[6] = vf + (f",drawtext=fontfile='{FONT}':text='{esc(caption)}':"
-                       f"fontsize=62:fontcolor=white:x=(w-text_w)/2:y=h-150:"
-                       f"borderw=5:bordercolor=black@0.9")
-    run(cmd)
+        vf += (f",drawtext=fontfile='{FONT}':text='{esc(caption)}':"
+               f"fontsize=62:fontcolor=white:x=(w-text_w)/2:y=h-150:"
+               f"borderw=5:bordercolor=black@0.9:"
+               f"shadowx=3:shadowy=3:shadowcolor=black@0.5")
+    run(["ffmpeg", "-y", "-v", "error", "-loop", "1", "-i", img,
+         "-vf", vf, "-t", f"{dur:.3f}", "-r", str(FPS),
+         "-c:v", "libx264", "-preset", "fast", "-crf", "19",
+         "-pix_fmt", "yuv420p", "-an", out])
 
 def card_segment(card, dur, idx, out, overlay=None):
     frames = max(2, round(dur * FPS))
@@ -172,7 +173,7 @@ def apply_overlay(vin, overlay, vout, idx=0):
         fc = f"[0:v][1:v]overlay=x={x}:y='{yex}':enable='gte(t,{at:.2f})'[vo]"
     run(["ffmpeg", "-y", "-v", "error", "-i", vin, "-i", png,
          "-filter_complex", fc, "-map", "[vo]",
-         "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-an", vout])
+         "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-an", vout])
 
 def make_overlay_png(kind, para, sec, i):
     import overlays as OV
@@ -330,10 +331,12 @@ def main():
                     if key in ptext:
                         photo = path
                         break
+                # don't repeat the same words in caption AND lower-third bubble
+                cap = None if ov_kind == "lower3" else para.get("card_title")
                 if photo and remaining > 5.5:
                     pd = min(6.0, remaining * 0.5)
                     pp = os.path.join(seg_dir, f"b_{i:04d}_photo.mp4")
-                    photo_segment(photo, pd, pp, caption=para.get("card_title"))
+                    photo_segment(photo, pd, pp, caption=cap)
                     parts.append(pp)
                     remaining -= pd
                 ncuts = max(1, round(remaining / BODY_CUT))
@@ -342,8 +345,7 @@ def main():
                     bp = os.path.join(seg_dir, f"b_{i:04d}_{k}.mp4")
                     src, start = broll.pick(cd)
                     broll_cut(src, start, cd, bp,
-                              caption=para.get("card_title")
-                              if (k == 0 and not photo) else None)
+                              caption=cap if (k == 0 and not photo) else None)
                     parts.append(bp)
                 if ov_kind:
                     try:

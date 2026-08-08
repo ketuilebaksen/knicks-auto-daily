@@ -20,7 +20,9 @@ UA = {"User-Agent": "knicks-auto-daily/1.0 (github actions; contact: repo owner)
 NAMES = ["Jalen Brunson", "Karl-Anthony Towns", "OG Anunoby", "Mikal Bridges",
          "Josh Hart", "Miles McBride", "Mitchell Robinson", "Landry Shamet",
          "Tyler Kolek", "Pacome Dadiet", "Guerschon Yabusele", "Jordan Clarkson",
-         "Mike Brown", "Madison Square Garden", "New York Knicks"]
+         "Ariel Hukporti", "Kevin McCullar", "Mike Brown", "Leon Rose",
+         "Tom Thibodeau", "Julius Randle", "RJ Barrett", "Immanuel Quickley",
+         "Donte DiVincenzo", "Madison Square Garden", "New York Knicks"]
 
 def fetch_json(params):
     url = API + "?" + urllib.parse.urlencode(params)
@@ -57,15 +59,18 @@ def main():
     os.makedirs(OUT, exist_ok=True)
     existing = [f for f in os.listdir(OUT)
                 if f.lower().endswith((".jpg", ".jpeg", ".png", ".webp"))]
-    if len(existing) >= 5:
+    if len(existing) >= 12:
         print(f"[photos] owner library present ({len(existing)} photos) — skipping auto-fetch")
         return
     with open(sys.argv[1]) as f:
         script = json.load(f)
     text = json.dumps(script)
-    wanted = [n for n in NAMES if n.split()[-1].lower() in text.lower()][:8]
-    if "New York Knicks" not in wanted:
-        wanted.append("New York Knicks")
+    wanted = [n for n in NAMES if n.split()[-1].lower() in text.lower()][:10]
+    for base in ("New York Knicks", "Madison Square Garden", "Jalen Brunson",
+                 "Karl-Anthony Towns", "Mikal Bridges", "OG Anunoby", "Josh Hart"):
+        if base not in wanted:
+            wanted.append(base)
+    wanted = wanted[:14]
     credits, n_ok = [], 0
     for term in wanted:
         best = search_photo(term + " basketball" if "Garden" not in term else term)

@@ -31,44 +31,59 @@ WORDS = ["BREAKING NEWS!", "URGENT UPDATE!", "EMERGENCY!", "PROBLEM!", "SCARY!",
 def _font(name, size):
     return ImageFont.truetype(os.path.join(A, name), size)
 
-# ---------------------------------------------------------------- background
+# --------------------------------------------------------------- background
+TEXT_ZONE = (0.735, 1.0)          # where the template's baked-in word sits
+
+def _erase_baked_text(img):
+    """Hide the template's built-in word by extending the floor beneath it."""
+    y0 = int(H * TEXT_ZONE[0])
+    strip = img.crop((0, int(H * 0.60), W, y0))
+    filler = strip.resize((W, H - y0), Image.LANCZOS)
+    filler = filler.filter(ImageFilter.GaussianBlur(26))
+    filler = ImageEnhance.Brightness(filler).enhance(0.86)
+    # feather the seam
+    mask = Image.new("L", (W, H - y0), 255)
+    md = ImageDraw.Draw(mask)
+    for i in range(90):
+        md.line([(0, i), (W, i)], fill=int(255 * i / 90))
+    img.paste(filler, (0, y0), mask)
+    return img
+
 def cinematic_bg():
-    src = os.path.join(A, "thumb_base2.jpg")
-    if not os.path.exists(src):
-        src = os.path.join(A, "thumb_base.jpg")
+    src = None
+    for cand in ("thumb_base3.png", "thumb_base3.jpg", "thumb_base2.jpg",
+                 "thumb_base.jpg"):
+        p = os.path.join(A, cand)
+        if os.path.exists(p):
+            src = p
+            break
     img = Image.open(src).convert("RGB").resize((W, H), Image.LANCZOS)
-
-    # gentle grade: richer colour, a touch more contrast
-    img = ImageEnhance.Color(img).enhance(1.22)
-    img = ImageEnhance.Contrast(img).enhance(1.18)
-    img = ImageEnhance.Sharpness(img).enhance(1.25)
-
-    # diagonal light beams (screen-blended, very soft)
-    beams = Image.new("RGB", (W, H), (0, 0, 0))
-    bd = ImageDraw.Draw(beams)
-    for x0, col, wdt in ((-400, (46, 36, 20), 260), (900, (58, 45, 22), 180),
-                         (2500, (38, 46, 62), 220)):
-        bd.polygon([(x0, H), (x0 + 420, H), (x0 + 420 + H, 0), (x0 + H, 0)], fill=col)
-    beams = beams.filter(ImageFilter.GaussianBlur(160))
-    img = ImageChops.screen(img, beams)
-
-    # warm glow behind the crest
-    halo = Image.new("RGB", (W, H), (0, 0, 0))
-    hd = ImageDraw.Draw(halo)
-    hd.ellipse([W // 2 - 1000, 120, W // 2 + 1000, 1800], fill=(58, 28, 6))
-    halo = halo.filter(ImageFilter.GaussianBlur(380))
-    img = ImageChops.screen(img, halo)
+    if "thumb_base3" in os.path.basename(src):
+        img = _erase_baked_text(img)          # template already cinematic
+        img = ImageEnhance.Color(img).enhance(1.06)
+        img = ImageEnhance.Contrast(img).enhance(1.05)
+    else:
+        img = ImageEnhance.Color(img).enhance(1.22)
+        img = ImageEnhance.Contrast(img).enhance(1.18)
+        img = ImageEnhance.Sharpness(img).enhance(1.25)
+        beams = Image.new("RGB", (W, H), (0, 0, 0))
+        bd = ImageDraw.Draw(beams)
+        for x0, col, wdt in ((-400, (46, 36, 20), 260), (900, (58, 45, 22), 180),
+                             (2500, (38, 46, 62), 220)):
+            bd.polygon([(x0, H), (x0 + 420, H), (x0 + 420 + H, 0), (x0 + H, 0)],
+                       fill=col)
+        img = ImageChops.screen(img, beams.filter(ImageFilter.GaussianBlur(160)))
 
     # slight defocus so the player cutouts pop (depth of field)
-    img = img.filter(ImageFilter.GaussianBlur(float(os.environ.get("BG_BLUR", "9"))))
-    img = ImageEnhance.Brightness(img).enhance(0.92)
+    img = img.filter(ImageFilter.GaussianBlur(float(os.environ.get("BG_BLUR", "7"))))
+    img = ImageEnhance.Brightness(img).enhance(0.94)
 
     # cinematic vignette
     vig = Image.new("L", (W, H), 0)
     ImageDraw.Draw(vig).ellipse([-W // 4, -H // 4, W + W // 4, H + H // 4], fill=255)
     vig = vig.filter(ImageFilter.GaussianBlur(420))
     img = Image.composite(img, Image.new("RGB", (W, H), (0, 0, 0)),
-                          vig.point(lambda v: 96 + v * 159 // 255))
+                          vig.point(lambda v: 104 + v * 151 // 255))
     return img
 
 # ------------------------------------------------------------------- cutouts
@@ -187,35 +202,39 @@ def place_player(canvas, cut, cx, bottom, height, glow_rgb):
                                        gl, 0.85))
     canvas.alpha_composite(p.convert("RGBA"), (x, y))
 
-# -------------------------------------------------------------------- banner
+# ------------------------------------------------------------------- banner
 def draw_banner(img, word):
-    d = ImageDraw.Draw(img, "RGBA")
-    top, bot = ORANGE_HI, (214, 92, 0)
-    hgt = H - BAND_TOP
-    for i, y in enumerate(range(BAND_TOP, H)):
-        f = i / hgt
-        d.line([(0, y), (W, y)],
-               fill=tuple(int(top[k] + (bot[k] - top[k]) * f) for k in range(3)))
-    d.rectangle([0, BAND_TOP - 10, W, BAND_TOP - 2], fill=(255, 255, 255, 60))
     if not word:
         return
     word = word.strip().upper()
-    size = 420
-    while size > 120:
+    d = ImageDraw.Draw(img)
+    size = 460
+    while size > 140:
         fnt = _font("ArchivoBlack.ttf", size)
-        if d.textlength(word, font=fnt) <= W - 260:
+        if d.textlength(word, font=fnt) <= W - 240:
             break
-        size -= 12
+        size -= 14
     tw = d.textlength(word, font=fnt)
-    x = (W - tw) // 2
-    y = BAND_TOP + (hgt - size) // 2 - int(size * 0.16)
+    x = int((W - tw) // 2)
+    y = int(H * 0.775)
 
+    # orange fire glow behind the letters
+    glow = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    gd = ImageDraw.Draw(glow)
+    gd.text((x, y), word, font=fnt, fill=(255, 150, 20, 255),
+            stroke_width=34, stroke_fill=(255, 108, 0, 255))
+    g1 = glow.filter(ImageFilter.GaussianBlur(30))
+    img.alpha_composite(g1)
+    img.alpha_composite(g1)
+    img.alpha_composite(glow.filter(ImageFilter.GaussianBlur(95)))
+
+    # hard drop shadow for depth
     sh = Image.new("RGBA", img.size, (0, 0, 0, 0))
-    ImageDraw.Draw(sh).text((x + 16, y + 22), word, font=fnt, fill=(0, 0, 0, 235))
-    sh = sh.filter(ImageFilter.GaussianBlur(22))
-    img.alpha_composite(sh)
+    ImageDraw.Draw(sh).text((x + 12, y + 20), word, font=fnt, fill=(0, 0, 0, 220))
+    img.alpha_composite(sh.filter(ImageFilter.GaussianBlur(16)))
+
     ImageDraw.Draw(img).text((x, y), word, font=fnt, fill=WHITE,
-                             stroke_width=8, stroke_fill=(35, 16, 0))
+                             stroke_width=9, stroke_fill=(28, 14, 2))
 
 # ------------------------------------------------------------------ compose
 def make_thumb(word=None, players=None, out=None, seed=0):
@@ -233,17 +252,17 @@ def make_thumb(word=None, players=None, out=None, seed=0):
             print(f"[thumb] cutout failed {p}: {e}")
 
     cuts = [head_crop(c) for c in cuts]           # close-up portraits
-    bottom = BAND_TOP + int(H * 0.045)            # slight overlap onto the band
+    bottom = int(H * 0.985)                        # feet at the floor line
     if len(cuts) == 1:
-        place_player(img, cuts[0], W * 0.70, bottom, int(H * 0.80), ORANGE)
+        place_player(img, cuts[0], W * 0.74, bottom, int(H * 0.82), ORANGE)
     elif len(cuts) == 2:
-        place_player(img, cuts[0], W * 0.235, bottom, int(H * 0.78), BLUE)
-        place_player(img, cuts[1], W * 0.765, bottom, int(H * 0.78), ORANGE)
+        place_player(img, cuts[0], W * 0.185, bottom, int(H * 0.80), BLUE)
+        place_player(img, cuts[1], W * 0.815, bottom, int(H * 0.80), ORANGE)
     elif len(cuts) >= 3:
-        place_player(img, cuts[2], W * 0.50, bottom - int(H * 0.06),
-                     int(H * 0.56), (150, 150, 170))
-        place_player(img, cuts[0], W * 0.185, bottom, int(H * 0.76), BLUE)
-        place_player(img, cuts[1], W * 0.815, bottom, int(H * 0.76), ORANGE)
+        place_player(img, cuts[2], W * 0.50, bottom - int(H * 0.04),
+                     int(H * 0.58), (150, 150, 170))
+        place_player(img, cuts[0], W * 0.155, bottom, int(H * 0.78), BLUE)
+        place_player(img, cuts[1], W * 0.845, bottom, int(H * 0.78), ORANGE)
 
     draw_banner(img, word)
     out = out or os.path.join(BASE, "work", "thumbnail.jpg")

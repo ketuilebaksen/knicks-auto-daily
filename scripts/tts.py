@@ -29,7 +29,11 @@ def http(url, key, data=None, retries=4):
     for i in range(retries):
         try:
             req = urllib.request.Request(url, headers={
-                "xi-api-key": key, "Content-Type": "application/json"},
+                "xi-api-key": key, "Content-Type": "application/json",
+                "Accept": "application/json, audio/mpeg, */*",
+                "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                               "AppleWebKit/537.36 (KHTML, like Gecko) "
+                               "Chrome/126.0.0.0 Safari/537.36")},
                 data=json.dumps(data).encode() if data else None)
             with urllib.request.urlopen(req, timeout=180) as r:
                 return r.read()

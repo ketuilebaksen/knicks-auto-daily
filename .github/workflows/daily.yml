@@ -1,7 +1,7 @@
 name: daily-video
 on:
   schedule:
-    - cron: "0 13 * * *"
+    - cron: "0 13 * * *"   # 12:00 UTC = 15:00 Istanbul; video live ~16:00
   workflow_dispatch:
     inputs:
       privacy:
@@ -30,7 +30,7 @@ jobs:
       - name: Install deps
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
-          pip install -q anthropic google-api-python-client google-auth Pillow piper-tts numpy pydub
+          pip install -q anthropic google-api-python-client google-auth Pillow piper-tts numpy pydub rembg onnxruntime opencv-python-headless
 
       - name: Generate script (Claude + web search)
         env:
@@ -46,7 +46,8 @@ jobs:
           git add content/ && git commit -m "daily $(date +%F)" || echo "nothing to commit"
           git push || true
 
-      - name: Piper fallback voice
+      - name: Piper fallback voice (only if no ElevenLabs key)
+        if: ${{ secrets.ELEVEN_API_KEY == '' }}
         run: |
           mkdir -p assets/voice
           curl -sL https://github.com/rhasspy/piper/releases/download/v0.0.2/voice-en-us-ryan-high.tar.gz | tar xz -C assets/voice/
@@ -61,21 +62,15 @@ jobs:
       - name: Visuals
         run: python3 scripts/visuals.py content/current/script.json
 
-      - name: Download b-roll library
+      - name: Download media libraries
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p work/broll
-          gh release download broll -R "$GITHUB_REPOSITORY" -D work/broll || echo "no b-roll release yet"
-
-      - name: Download music and photos
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          mkdir -p work/music work/photos
-          gh release download music -R "$GITHUB_REPOSITORY" -D work/music || echo "no music release yet"
-          gh release download photos -R "$GITHUB_REPOSITORY" -D work/photos || echo "no photos release yet"
-          python3 scripts/photos.py content/current/script.json || echo "auto-photos skipped"
+          mkdir -p work/broll work/music work/photos
+          gh release download broll -R "$GITHUB_REPOSITORY" -D work/broll || echo "no b-roll release"
+          gh release download music -R "$GITHUB_REPOSITORY" -D work/music || echo "no music release"
+          gh release download photos -R "$GITHUB_REPOSITORY" -D work/photos || echo "no photos release"
+          python3 scripts/photos.py content/current/script.json || echo "auto photos skipped"
 
       - name: Sound effects
         run: python3 scripts/sfx.py

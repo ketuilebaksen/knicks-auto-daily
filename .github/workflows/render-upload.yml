@@ -23,7 +23,7 @@ jobs:
       - name: Install deps
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
-          pip install -q google-api-python-client google-auth Pillow piper-tts numpy pydub
+          pip install -q google-api-python-client google-auth Pillow piper-tts numpy pydub rembg onnxruntime opencv-python-headless
 
       - name: Piper fallback voice
         run: |
@@ -40,21 +40,15 @@ jobs:
       - name: Visuals
         run: python3 scripts/visuals.py content/current/script.json
 
-      - name: Download b-roll library
+      - name: Download media libraries
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p work/broll
-          gh release download broll -R "$GITHUB_REPOSITORY" -D work/broll || echo "no b-roll release yet"
-
-      - name: Download music and photos
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          mkdir -p work/music work/photos
-          gh release download music -R "$GITHUB_REPOSITORY" -D work/music || echo "no music release yet"
-          gh release download photos -R "$GITHUB_REPOSITORY" -D work/photos || echo "no photos release yet"
-          python3 scripts/photos.py content/current/script.json || echo "auto-photos skipped"
+          mkdir -p work/broll work/music work/photos
+          gh release download broll -R "$GITHUB_REPOSITORY" -D work/broll || echo "no b-roll release"
+          gh release download music -R "$GITHUB_REPOSITORY" -D work/music || echo "no music release"
+          gh release download photos -R "$GITHUB_REPOSITORY" -D work/photos || echo "no photos release"
+          python3 scripts/photos.py content/current/script.json || echo "auto photos skipped"
 
       - name: Sound effects
         run: python3 scripts/sfx.py

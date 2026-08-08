@@ -53,7 +53,8 @@ jobs:
           git add content/ && git commit -m "daily $(date +%F)" || echo "nothing to commit"
           git push || true
 
-- name: Piper fallback voice        run: |
+      - name: Piper fallback voice
+        run: |
           mkdir -p assets/voice
           curl -sL https://github.com/rhasspy/piper/releases/download/v0.0.2/voice-en-us-ryan-high.tar.gz | tar xz -C assets/voice/
 

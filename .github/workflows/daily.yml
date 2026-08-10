@@ -1,8 +1,9 @@
 name: daily-video
 on:
   schedule:
-    - cron: "0 13 * * *"     # 16:00 Istanbul -> publishes 18:00
-    - cron: "0 18 * * *"     # 21:00 Istanbul -> publishes 23:00
+    # Istanbul = UTC+3. Each run starts ~2h before the upload deadline.
+    - cron: "0 1 * * *"      # starts 04:00 Istanbul -> uploaded by 06:00 -> publishes 11:00
+    - cron: "0 10 * * *"     # starts 13:00 Istanbul -> uploaded by 15:00 -> publishes 18:00
   workflow_dispatch:
     inputs:
       privacy:
@@ -12,6 +13,7 @@ on:
 
 permissions:
   contents: write
+  issues: write
 
 concurrency:
   group: render
@@ -33,18 +35,27 @@ jobs:
           sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
           pip install -q anthropic google-api-python-client google-auth Pillow piper-tts numpy pydub rembg onnxruntime opencv-python-headless
 
+      - name: Pick today's slot
+        run: |
+          # morning run  -> publishes 11:00 Istanbul = 08:00 UTC
+          # afternoon run-> publishes 18:00 Istanbul = 15:00 UTC
+          H=$(date -u +%H)
+          if [ "$H" -lt 6 ]; then
+            echo "SLOT=early"        >> $GITHUB_ENV
+            echo "PUBLISH_UTC=08:00" >> $GITHUB_ENV
+          else
+            echo "SLOT=late"         >> $GITHUB_ENV
+            echo "PUBLISH_UTC=15:00" >> $GITHUB_ENV
+          fi
+
       - name: Generate script (Claude + web search)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           MODEL: ${{ vars.MODEL || 'claude-sonnet-4-5' }}
-          TARGET_MINUTES: ${{ vars.TARGET_MINUTES || '30' }}
+          TARGET_MINUTES: ${{ vars.TARGET_MINUTES || '15' }}
           PRIVACY: ${{ inputs.privacy || 'public' }}
         run: |
-          # slot 1 (early run) publishes 18:00 Istanbul = 15:00 UTC
-          # slot 2 (late run)  publishes 23:00 Istanbul = 20:00 UTC
-          H=$(date -u +%H)
-          if [ "$H" -lt 16 ]; then export PUBLISH_UTC=15:00; else export PUBLISH_UTC=20:00; fi
-          echo "publish slot -> $PUBLISH_UTC UTC"
+          echo "slot=$SLOT publish=$PUBLISH_UTC UTC"
           python3 scripts/generate.py
 
       - name: Commit content
@@ -53,7 +64,8 @@ jobs:
           git add content/ && git commit -m "daily $(date +%F)" || echo "nothing to commit"
           git push || true
 
-- name: Piper fallback voice        run: |
+      - name: Piper fallback voice
+        run: |
           mkdir -p assets/voice
           curl -sL https://github.com/rhasspy/piper/releases/download/v0.0.2/voice-en-us-ryan-high.tar.gz | tar xz -C assets/voice/
 
@@ -95,7 +107,25 @@ jobs:
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          SKIP_THUMBNAIL: ${{ vars.SKIP_THUMBNAIL || '1' }}
         run: python3 scripts/upload.py content/current/meta.json
+
+      - name: Kapak notu (issue + e-posta)
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/brief.py content/current/script.json \
+                                   content/current/meta.json > /dev/null || exit 0
+          cat work/kapak_brief.md >> $GITHUB_STEP_SUMMARY
+          T=$(python3 -c "import json;print(json.load(open('content/current/meta.json'))['title'][:70])")
+          gh issue create -R "$GITHUB_REPOSITORY" \
+            --title "KAPAK GEREKLI — $T" \
+            --body-file work/kapak_brief.md \
+            --assignee "${{ github.repository_owner }}" \
+          || gh issue create -R "$GITHUB_REPOSITORY" \
+            --title "KAPAK GEREKLI — $T" \
+            --body-file work/kapak_brief.md
 
       - name: Result summary
         if: always()
@@ -111,6 +141,8 @@ jobs:
           path: |
             work/final.mp4
             work/thumbnail.jpg
+            work/thumbnail_yt.jpg
+            content/current/meta.json
             upload_result.json
           retention-days: 2
           if-no-files-found: ignore

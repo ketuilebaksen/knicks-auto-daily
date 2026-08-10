@@ -3,5 +3,7 @@
   "outro_tag": "NEW KNICKS VIDEO EVERY DAY",
   "editorial": "news",
   "clip_offset": 37,
-  "thumb_engine": "ai"
+  "thumb_engine": "none",
+  "tts_engine": "eleven",
+  "eleven_voice_id": "S9UjcNYIwfBOtZiDnIQT"
 }

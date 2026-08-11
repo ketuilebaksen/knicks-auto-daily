@@ -111,7 +111,7 @@ jobs:
         run: python3 scripts/upload.py content/current/meta.json
 
       - name: Kapak notu (issue + e-posta)
-        if: always()
+        if: success()        # only when the video really reached YouTube
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -137,12 +137,11 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: video-${{ github.run_number }}
+          name: run-${{ github.run_number }}
           path: |
-            work/final.mp4
-            work/thumbnail.jpg
-            work/thumbnail_yt.jpg
             content/current/meta.json
+            content/current/script.json
+            work/kapak_brief.md
             upload_result.json
-          retention-days: 2
+          retention-days: 5
           if-no-files-found: ignore

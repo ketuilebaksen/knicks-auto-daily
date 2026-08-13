@@ -1,9 +1,12 @@
 name: render-upload
 # Manual-script flow: the owner writes the script, drops script.json + meta.json
-# into content/current, and this renders the video. Where the video goes is
-# decided by "privacy" in meta.json:
-#   "skip"  -> not uploaded to YouTube; published as a downloadable release
-#   other   -> uploaded to YouTube as usual (and still released for download)
+# into content/current, and this renders the video.
+#
+# This workflow CANNOT upload to YouTube. The upload step was removed on
+# purpose: the owner publishes by hand. The finished video is published as a
+# GitHub Release and the owner downloads it from there. Relying on a "privacy"
+# field in meta.json was not enough — a stale meta.json once put a video on the
+# channel by accident. No step, no accident.
 on:
   push:
     paths:
@@ -93,14 +96,6 @@ jobs:
             echo ""
             echo "Boyut: $SIZE"
           } >> $GITHUB_STEP_SUMMARY
-
-      - name: Upload to YouTube (meta.json privacy=skip ise atlanir)
-        env:
-          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
-          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
-          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
-          SKIP_THUMBNAIL: ${{ vars.SKIP_THUMBNAIL || '1' }}
-        run: python3 scripts/upload.py content/current/meta.json
 
       - name: Bildirim (issue)
         if: always()

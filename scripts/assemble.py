@@ -24,8 +24,12 @@ MUSIC_GAIN = float(os.environ.get("MUSIC_GAIN", "-18.5"))  # dB
 NARR_PEAK = float(os.environ.get("NARR_PEAK_DBFS", "-3.0"))  # safe headroom
 SFX_GAIN = float(os.environ.get("SFX_GAIN", "-15"))        # dB
 MAX_SFX = int(os.environ.get("MAX_SFX", "5"))
-CRF_CUT = os.environ.get("CRF_CUT", "16")      # b-roll cuts (lower = sharper)
-CRF_PHOTO = os.environ.get("CRF_PHOTO", "16")
+# CRF 16 gorsel olarak kusursuzdu ama 32 dakikalik bir video 2.2 GB ediyordu ve
+# GitHub tek dosyada 2 GB'i kabul etmiyor. CRF 20 gozle ayirt edilemeyecek kadar
+# yakin, dosyayi yariya indiriyor. YouTube zaten yeniden kodluyor.
+# Daha keskin isteyen depo degiskeni CRF_CUT=16 ile geri alabilir.
+CRF_CUT = os.environ.get("CRF_CUT", "20")      # b-roll cuts (lower = sharper)
+CRF_PHOTO = os.environ.get("CRF_PHOTO", "20")
 PRESET = os.environ.get("X264_PRESET", "fast")
 SHARPEN = os.environ.get("SHARPEN", "0") == "1"  # off: keep source look
 OVERLAY_KINDS = ["speech", "lower3", "comic", "chat"]
@@ -40,9 +44,19 @@ try:
     CLIP_OFFSET = int(CH.get("clip_offset", 37))
     BOUNCE = bool(CH.get("bounce", True))
     PHOTO_ZOOM = float(CH.get("photo_zoom", 0.08))
+    BRAND = CH.get("name", "NY KNICKS DAILY")
+    PALETTE = CH.get("palette", {})
 except Exception as _e:
     print(f"[assemble] channel config default ({_e})")
     OVERLAY_EVERY, CLIP_OFFSET, BOUNCE, PHOTO_ZOOM = 25.0, 37, True, 0.08
+    BRAND, PALETTE = "NY KNICKS DAILY", {}
+
+# How long the Vox-style opener runs before the hook falls back to fast cuts.
+HOOK_MAX = float(os.environ.get("HOOK_MAX", "9"))
+
+# The branded opener runs silent, so the video starts with a few seconds of
+# nobody talking. Set INTRO=0 and the video opens on the first spoken word.
+INTRO_ON = os.environ.get("INTRO", "1") != "0"
 
 def run(cmd):
     subprocess.run(cmd, check=True)
@@ -137,7 +151,13 @@ def photo_segment(img, dur, out, caption=None):
     frames = max(2, round(dur * FPS))
     # slow, professional ken-burns: 1.00 -> 1.08 across the whole segment
     z = f"min(1+{PHOTO_ZOOM}*on/{frames},{1 + PHOTO_ZOOM})"
-    plain = (f"scale=2400:-2:flags=lanczos+accurate_rnd,crop=2400:1350,"
+    # A panoramic photo (a stadium shot, say) scaled to 2400 wide comes out far
+    # shorter than 1350, and cropping to a size larger than the frame is an
+    # ffmpeg error, not a no-op — one such photo used to kill the whole render.
+    # force_original_aspect_ratio=increase guarantees both sides reach the
+    # target first, so the crop always has something to cut from.
+    plain = (f"scale=2400:1350:force_original_aspect_ratio=increase:"
+             f"flags=lanczos+accurate_rnd,crop=2400:1350,"
              f"zoompan=z='{z}':d={frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
              f":s=1920x1080:fps={FPS},format=yuv420p")
     vf = plain
@@ -262,13 +282,16 @@ def photo_lookup(photos):
 def make_intro(broll, seg_dir):
     """Fast branded opener: 2 flash cuts + title card. Returns (files, duration)."""
     files, d_total = [], 0.0
+    if not INTRO_ON:
+        print("[assemble] intro off — video ilk soylenen kelimeyle basliyor")
+        return files, d_total
     if broll.any():
         for k in range(2):
             p = os.path.join(seg_dir, f"intro_cut{k}.mp4")
             if not (os.path.exists(p) and os.path.getsize(p) > 5000):
                 src, start = broll.pick(1.1)
                 broll_cut(src, start, 1.1, p,
-                          big_word="NY KNICKS DAILY" if k == 1 else None, flash=True)
+                          big_word=BRAND if k == 1 else None, flash=True)
             files.append(p)
             d_total += 1.1
     card = os.path.join(BASE, "work", "intro.jpg")
@@ -302,6 +325,74 @@ def make_outro(seg_dir):
              "-t", "7.0", "-r", str(FPS), "-c:v", "libx264", "-preset", "medium",
              "-crf", "19", "-an", p])
     return [p], 7.0
+
+def build_opener(out, dur, photos, broll, script, seg_dir):
+    """The first seconds: a 2.5D shot with headline pages flying across it.
+
+    Built in two stages so each can fail on its own. The moving shot comes
+    first — parallax over a real photo if the cut-out works, otherwise fast
+    stock cuts. Then the pages fly over whatever that produced. If the pages
+    fail we still ship the shot; if the shot fails we still ship the pages
+    over footage. Only a total failure sends the caller back to plain cuts.
+    """
+    base = os.path.join(seg_dir, "hook_base.mp4")
+    made = False
+
+    # Prefer a photo of somebody the opening actually names. A stadium
+    # panorama has no subject to lift off the background, so parallax on it
+    # either fails outright or looks like a wobble.
+    opening = " ".join(p.get("text", "")
+                       for sec in script.get("sections", [])[:1]
+                       for p in sec.get("paragraphs", [])[:3]).lower()
+    def _rank(path):
+        stem = os.path.splitext(os.path.basename(path))[0].lower()
+        parts = [w for w in re.split(r"[^a-z]+", stem) if len(w) > 3]
+        return -sum(1 for w in parts if w in opening)
+    photos = sorted(photos, key=_rank)
+
+    if photos:
+        try:
+            import parallax
+            # the opener carries the channel name only when there is no intro
+            # card ahead of it, so the brand is never stamped twice
+            if INTRO_ON:
+                parallax.segment(photos[0], dur, base, crf=CRF_PHOTO,
+                                 preset=PRESET, fps=FPS)
+            else:
+                parallax.hero(photos[0], dur, base, title=BRAND, font=FONT,
+                              crf=CRF_PHOTO, preset=PRESET, fps=FPS)
+            made = True
+            print(f"[assemble] opener: parallax over "
+                  f"{os.path.basename(photos[0])}", flush=True)
+        except Exception as e:
+            print(f"[assemble] parallax opener unavailable ({e})", flush=True)
+    if not made:
+        if not broll.any():
+            raise RuntimeError("no photo and no b-roll for the opener")
+        n = max(1, round(dur / 2.2))
+        cd = dur / n
+        parts = []
+        for k in range(n):
+            p = os.path.join(seg_dir, f"hook_base_{k}.mp4")
+            src, start = broll.pick(cd)
+            broll_cut(src, start, cd, p)
+            parts.append(p)
+        lst = os.path.join(seg_dir, "hook_base.txt")
+        with open(lst, "w") as f:
+            f.write("\n".join(f"file '{p}'" for p in parts) + "\n")
+        run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0",
+             "-i", lst, "-c", "copy", base])
+        print("[assemble] opener: stock cuts (no usable photo)", flush=True)
+
+    try:
+        import hook
+        hook.vox_pages(base, hook.phrases(script), dur, out,
+                       palette=PALETTE, crf=CRF_CUT, preset=PRESET, fps=FPS)
+    except Exception as e:
+        print(f"[assemble] hook pages skipped ({e})", flush=True)
+        run(["ffmpeg", "-y", "-v", "error", "-i", base, "-c", "copy", out])
+    return out
+
 
 def main():
     script_path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(
@@ -354,9 +445,27 @@ def main():
                 last_popup_t = t0
 
         if is_hook:
-            cuts = max(1, round(dur / CUT_LEN))
-            cut_d = dur / cuts
             parts = []
+            remaining = dur
+            # The opener: a 2.5D parallax shot with headline pages flying over
+            # it. This is the only place in the video where text arrives in
+            # bursts — the first seconds have to earn the rest of the watch.
+            if i == 0:
+                try:
+                    od = min(HOOK_MAX, dur)
+                    op = os.path.join(seg_dir, "hook_open.mp4")
+                    if fresh or not (os.path.exists(op) and
+                                     os.path.getsize(op) > 5000):
+                        build_opener(op, od, photos, broll, script, seg_dir)
+                    parts.append(f"file '{op}'")
+                    remaining = max(0.0, dur - od)
+                except Exception as e:
+                    print(f"[assemble] opener skipped ({e}) — plain hook cuts",
+                          flush=True)
+                    remaining = dur
+
+            cuts = max(1, round(remaining / CUT_LEN)) if remaining > 0.7 else 0
+            cut_d = remaining / cuts if cuts else 0.0
             for k in range(cuts):
                 part = os.path.join(seg_dir, f"h_{i:04d}_{k}.mp4")
                 if fresh:
@@ -391,9 +500,28 @@ def main():
                 if photo and remaining > 5.5:
                     pd = min(6.0, remaining * 0.5)
                     pp = os.path.join(seg_dir, f"b_{i:04d}_photo.mp4")
-                    photo_segment(photo, pd, pp, caption=cap)
-                    parts.append(pp)
-                    remaining -= pd
+                    try:
+                        # 2.5D first: the subject and the background move at
+                        # different speeds, which reads as depth. A flat
+                        # ken-burns push is the fallback, not the goal.
+                        try:
+                            import parallax
+                            parallax.segment(photo, pd, pp, caption=cap,
+                                             font=FONT, esc=esc,
+                                             crf=CRF_PHOTO, preset=PRESET,
+                                             fps=FPS)
+                        except Exception as pe:
+                            print(f"[assemble] flat photo "
+                                  f"({os.path.basename(photo)}: {pe})",
+                                  flush=True)
+                            photo_segment(photo, pd, pp, caption=cap)
+                        parts.append(pp)
+                        remaining -= pd
+                    except Exception as e:
+                        # a single unusable photo must never cost the video —
+                        # give the time back to the b-roll and carry on
+                        print(f"[assemble] photo skipped "
+                              f"({os.path.basename(photo)}: {e})", flush=True)
                 ncuts = max(1, round(remaining / BODY_CUT))
                 cd = remaining / ncuts
                 for k in range(ncuts):

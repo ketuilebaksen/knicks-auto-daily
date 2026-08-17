@@ -27,6 +27,19 @@ WHITE = (255, 255, 255)
 
 WORDS = ["BREAKING NEWS!", "URGENT UPDATE!", "EMERGENCY!", "PROBLEM!", "SCARY!",
          "HUGE NEWS!", "CRAZY TRADE!", "IT'S OVER?!", "SHOCKING!", None, None]
+TEMPLATE = "thumb_base3.png"
+CINEMATIC_TPL = False
+try:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import channel as CH
+    WORDS = CH.get("thumb_words", WORDS)
+    TEMPLATE = CH.get("thumb_template", TEMPLATE)
+    CINEMATIC_TPL = bool(CH.get("thumb_cinematic", False))
+    _p = CH.get("palette", {})
+    ORANGE = tuple(_p.get("primary", ORANGE))
+    BLUE = tuple(_p.get("secondary", BLUE))
+except Exception:
+    pass
 
 def _font(name, size):
     return ImageFont.truetype(os.path.join(A, name), size)
@@ -51,14 +64,14 @@ def _erase_baked_text(img):
 
 def cinematic_bg():
     src = None
-    for cand in ("thumb_base3.png", "thumb_base3.jpg", "thumb_base2.jpg",
-                 "thumb_base.jpg"):
+    for cand in (TEMPLATE, "thumb_base3.png", "thumb_base3.jpg",
+                 "thumb_base2.jpg", "thumb_base.jpg"):
         p = os.path.join(A, cand)
         if os.path.exists(p):
             src = p
             break
     img = Image.open(src).convert("RGB").resize((W, H), Image.LANCZOS)
-    if "thumb_base3" in os.path.basename(src):
+    if os.path.basename(src).startswith("thumb_base3") or CINEMATIC_TPL:
         img = _erase_baked_text(img)          # template already cinematic
         img = ImageEnhance.Color(img).enhance(1.06)
         img = ImageEnhance.Contrast(img).enhance(1.05)
@@ -272,12 +285,16 @@ def make_thumb(word=None, players=None, out=None, seed=0):
     # YouTube-ready copy (<2MB) next to it
     yt = out.replace(".jpg", "_yt.jpg")
     final.resize((1280, 720), Image.LANCZOS).save(yt, quality=92)
+    if not cuts:
+        print("[thumb] WARNING: no player cutouts — check work/photos "
+              f"({os.path.join(BASE, 'work', 'photos')})", flush=True)
     print(f"[thumb] {os.path.basename(out)} 4K + 720p | word={word!r} "
           f"players={len(cuts)}")
     return out
 
 
 def players_from_script(script, photo_dir=None, limit=3):
+    """Pick photo files for the players most mentioned in today's script."""
     """Pick photo files for the players most mentioned in today's script."""
     photo_dir = photo_dir or os.path.join(BASE, "work", "photos")
     if not os.path.isdir(photo_dir):

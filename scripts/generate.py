@@ -2,7 +2,8 @@
 """
 generate.py — daily script + metadata writer. Runs in GitHub Actions.
 Calls Claude (Anthropic API) with server-side web search to research today's
-NY Knicks news and produce content/current/script.json + meta.json.
+today's news for the team configured in channel.json and produce
+content/current/script.json + meta.json.
 
 Env: ANTHROPIC_API_KEY  (required)
      MODEL              (default: claude-sonnet-4-5)
@@ -24,20 +25,20 @@ WORDS = MINUTES * 150  # ~150 wpm narration
 PARAS = max(8, round(WORDS / 85))                 # ~85 words per paragraph
 SECTIONS = f"{max(4, PARAS // 7)}-{max(5, PARAS // 5)}"
 
-TITLE_GUIDE = """
+TITLE_GUIDE_TMPL = """
 TITLE STYLE (match the channel's proven patterns):
 - News-heavy day (trades, signings, rumors) -> hype style: ALL CAPS, exclamation,
   mystery subject. Examples: "MASSIVE TRADE! NOBODY COULD BELIEVE HE'S NOW A KNICK!",
-  "Knicks TARGETING Bucks 7-Footer?! TRADE Rumors EXPLAINED! Knicks News Today"
+  "{NICK} TARGETING Star Veteran?! TRADE Rumors EXPLAINED! {NICK} News Today"
 - Analysis/story day -> documentary style: "The X That Y" / "How ..." with ONE
   power word in CAPS and a concrete number. Examples:
   "The $104M Mistake That Cost Dallas An NBA Title",
-  "How a Short Unwanted Jalen Brunson REVIVED The New York Knicks",
-  "How did the Knicks Win when the Spurs Controlled 72% of the Finals?"
+  "How One Overlooked Signing REVIVED The {TEAM}",
+  "How did the {NICK} Win when they were Outgained by 200 Yards?"
 - Always include a number, a name, or a mystery hook. Never bland titles.
 """
 
-SCHEMA_HINT = """
+SCHEMA_HINT_TMPL = """
 Return ONE JSON object inside a ```json fenced block, exactly this shape:
 {
  "title": "<=95 char clickable title",
@@ -54,7 +55,7 @@ Return ONE JSON object inside a ```json fenced block, exactly this shape:
     ]}
  ],
  "meta": {
-   "description": "2-3 paragraph YouTube description + hashtags (#Knicks #NBA #NewYorkKnicks) + line: 'Narration is AI-generated. All commentary and analysis is original.'",
+   "description": "2-3 paragraph YouTube description + hashtags ({HASHTAGS}) + line: 'Narration is AI-generated. All commentary and analysis is original.'",
    "tags": ["15-20 seo tags"]
  }
 }
@@ -65,13 +66,26 @@ try:
     import channel as CH
     EDITORIAL = CH.get("editorial", "news")
     BRAND = CH.get("name", "NY KNICKS DAILY")
+    TEAM = CH.get("team", "New York Knicks")
+    LEAGUE = CH.get("league", "NBA")
+    SPORT = CH.get("sport", "basketball")
+    SOURCES = CH.get("sources", "ESPN, SNY, New York Post, HoopsHype, RealGM")
+    HASHTAGS = CH.get("hashtags", "#Knicks #NBA #NewYorkKnicks")
+    NICK = CH.get("nickname", TEAM.split()[-1])
 except Exception:
     EDITORIAL, BRAND = "news", "NY KNICKS DAILY"
+    TEAM, LEAGUE, SPORT = "New York Knicks", "NBA", "basketball"
+    SOURCES = "ESPN, SNY, New York Post, HoopsHype, RealGM"
+    HASHTAGS = "#Knicks #NBA #NewYorkKnicks"
+    NICK = "Knicks"
 
-DOC_BRIEF = """You are writing for a Knicks STORYTELLING channel, not a news desk.
+TITLE_GUIDE = TITLE_GUIDE_TMPL.replace("{NICK}", NICK).replace("{TEAM}", TEAM)
+SCHEMA_HINT = SCHEMA_HINT_TMPL.replace("{HASHTAGS}", HASHTAGS)
+
+DOC_BRIEF = """You are writing for a """ + TEAM + """ STORYTELLING channel, not a news desk.
 Do NOT report today's breaking news — the sister channel covers that. Instead pick
 ONE evergreen subject and tell it properly: a legend's career arc, a historic game
-or series, a franchise turning point, a tactical breakdown, a statistical deep dive,
+or season, a franchise turning point, a tactical breakdown, a statistical deep dive,
 a 'what if this trade never happened' scenario, or a season retrospective.
 Tone: calm, authoritative, documentary. Build a narrative with a beginning, a
 turn and a payoff. Use concrete numbers and dates. No hype, no clickbait shouting.
@@ -87,15 +101,15 @@ SLOT_ANGLES = {
 }
 
 def build_prompt(today, recent_topics, slot="early"):
-    return f"""Today is {today}. You write the daily episode for "NY Knicks Daily",
-a faceless YouTube channel. Use web search NOW to research today's New York Knicks
-news: trades, rumors, injuries, quotes, games (if in season, yesterday's game is the
-lead story), Summer League, roster analysis. Check multiple sources (ESPN, SNY,
-New York Post, HoopsHype, RealGM). If news is thin, add one deep-dive topic
-(roster analysis, historical Knicks story, player profile, season projection).
+    return f"""Today is {today}. You write the daily episode for "{BRAND}",
+a faceless YouTube channel about the {TEAM} ({LEAGUE} {SPORT}). Use web search NOW to
+research today's {TEAM} news: trades, signings, rumors, injuries, quotes, games (if in
+season, the most recent game is the lead story), training camp, roster analysis.
+Check multiple sources ({SOURCES}). If news is thin, add one deep-dive topic
+(roster analysis, a historical {NICK} story, a player profile, a season projection).
 Blend in commentary and opinion, and where natural connect today's stories to
 history: past transfers, training camps, game preparations, players' career
-arcs and iconic Knicks moments. Make it feel like an expert host talking.
+arcs and iconic {NICK} moments. Make it feel like an expert host talking.
 
 EPISODE ANGLE: {SLOT_ANGLES[slot]}
 

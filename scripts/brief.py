@@ -14,12 +14,17 @@ import datetime, json, os, re, sys
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(BASE, "work", "kapak_brief.md")
 
-NAMES = ["Jalen Brunson", "Karl-Anthony Towns", "OG Anunoby", "Mikal Bridges",
-         "Josh Hart", "Miles McBride", "Deuce McBride", "Mitchell Robinson",
-         "Landry Shamet", "Tyler Kolek", "Pacome Dadiet", "Guerschon Yabusele",
-         "Jordan Clarkson", "Ariel Hukporti", "Kevin McCullar", "Mike Brown",
-         "Leon Rose", "Tom Thibodeau", "Julius Randle", "RJ Barrett",
-         "Immanuel Quickley", "Donte DiVincenzo", "James Dolan"]
+try:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import channel as CH
+    NAMES = CH.get("roster", []) or []
+except Exception:
+    NAMES = []
+if not NAMES:
+    NAMES = ["Jalen Brunson", "Karl-Anthony Towns", "OG Anunoby", "Mikal Bridges",
+             "Josh Hart", "Miles McBride", "Deuce McBride", "Mitchell Robinson",
+             "Mike Brown", "Leon Rose", "Tom Thibodeau", "Julius Randle",
+             "RJ Barrett", "Immanuel Quickley", "Donte DiVincenzo"]
 
 
 def mentions(text):

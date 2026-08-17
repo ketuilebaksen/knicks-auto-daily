@@ -21,12 +21,24 @@ API = "https://commons.wikimedia.org/w/api.php"
 UA = {"User-Agent": "knicks-auto-daily/1.0 (github actions; contact: repo owner)"}
 MIN_TIERS = [(1800, 1100), (1400, 900), (1000, 650)]   # relax until something fits
 
-NAMES = ["Jalen Brunson", "Karl-Anthony Towns", "OG Anunoby", "Mikal Bridges",
-         "Josh Hart", "Miles McBride", "Mitchell Robinson", "Landry Shamet",
-         "Tyler Kolek", "Pacome Dadiet", "Guerschon Yabusele", "Jordan Clarkson",
-         "Ariel Hukporti", "Kevin McCullar", "Mike Brown", "Leon Rose",
-         "Tom Thibodeau", "Julius Randle", "RJ Barrett", "Immanuel Quickley",
-         "Donte DiVincenzo", "Madison Square Garden", "New York Knicks"]
+try:
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import channel as CH
+    NAMES = CH.get("roster", []) or []
+    SPORT = CH.get("sport", "basketball")
+    VENUE = CH.get("venue", "Madison Square Garden")
+    TEAM = CH.get("team", "New York Knicks")
+except Exception:
+    NAMES, SPORT, VENUE, TEAM = [], "basketball", "Madison Square Garden", "New York Knicks"
+
+if not NAMES:                       # fall back to the original Knicks roster
+    NAMES = ["Jalen Brunson", "Karl-Anthony Towns", "OG Anunoby", "Mikal Bridges",
+             "Josh Hart", "Miles McBride", "Mitchell Robinson", "Landry Shamet",
+             "Tyler Kolek", "Pacome Dadiet", "Guerschon Yabusele", "Jordan Clarkson",
+             "Ariel Hukporti", "Kevin McCullar", "Mike Brown", "Leon Rose",
+             "Tom Thibodeau", "Julius Randle", "RJ Barrett", "Immanuel Quickley",
+             "Donte DiVincenzo"]
+NAMES = NAMES + [TEAM, VENUE]
 
 def fetch_json(params):
     url = API + "?" + urllib.parse.urlencode(params)
@@ -102,21 +114,19 @@ def main():
     text = json.dumps(script).lower()
 
     wanted = [n for n in NAMES if n.split()[-1].lower() in text][:10]
-    for base in ("Jalen Brunson", "Karl-Anthony Towns", "Mikal Bridges",
-                 "OG Anunoby", "Josh Hart", "New York Knicks",
-                 "Madison Square Garden"):
+    for base in NAMES[:5] + [TEAM, VENUE]:
         if base not in wanted:
             wanted.append(base)
     wanted = wanted[:14]
 
     credits, n_ok = [], 0
     for term in wanted:
-        query = term if "Garden" in term else term + " basketball"
+        query = term if term in (TEAM, VENUE) else term + " " + SPORT
         cands = candidates(query)
         if not cands:
             print(f"[photos] no candidate for {term}")
             continue
-        is_person = term not in ("New York Knicks", "Madison Square Garden")
+        is_person = term not in (TEAM, VENUE)
         dest = os.path.join(OUT, re.sub(r"[^a-z0-9]+", "_", term.lower()) + ".jpg")
         best = None                       # (score, tmp, artist, lic, title)
         for k, (_, url, artist, lic, title) in enumerate(

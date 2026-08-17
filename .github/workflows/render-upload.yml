@@ -69,10 +69,12 @@ jobs:
           MEDIA_REPO: ${{ vars.MEDIA_REPO || github.repository }}
           MUSIC_REPO: ${{ vars.MUSIC_REPO || github.repository }}
         run: |
-          mkdir -p work/broll work/music work/photos
+          mkdir -p work/broll work/music work/photos work/ambient
           gh release download broll -R "$MEDIA_REPO" -D work/broll || echo "no b-roll release"
           gh release download music -R "$MUSIC_REPO" -D work/music || echo "no music release"
           gh release download photos -R "$MEDIA_REPO" -D work/photos || echo "no photos release"
+          # stadyum ugultusu / ortam sesi — opsiyonel, yoksa video sessiz zeminde kalir
+          gh release download ambient -R "$MEDIA_REPO" -D work/ambient || echo "no ambient release"
           python3 scripts/photos.py content/current/script.json || echo "auto photos skipped"
 
       - name: Visuals
@@ -106,6 +108,12 @@ jobs:
           NOTE=""
           FILES="work/final.mp4"
           if [ "$SIZE_B" -gt "$TARGET" ]; then
+            # Bolme isi videonun ikinci bir kopyasini yaziyor. Kurgu artiklari
+            # (segmentler, stok videolar, fotograflar) diskte durdugu surece
+            # yer kalmiyor ve "No space left on device" ile dusuyorduk.
+            # Bunlar bu noktada tamamen gereksiz, siliyoruz.
+            rm -rf work/segs work/broll work/photos work/cards work/music
+            df -h / | tail -1
             DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 work/final.mp4)
             PARTS=$(( SIZE_B / TARGET + 1 ))
             SEG=$(python3 -c "print(max(60,int(float('$DUR')/$PARTS)+1))")
@@ -119,7 +127,8 @@ jobs:
 
           gh release create "$TAG" $FILES \
             -R "$GITHUB_REPOSITORY" -t "$T" \
-            -n "Hazir video ($SIZE).$NOTE Asagidaki dosyalara tiklayip indir."
+            -n "Hazir video ($SIZE).$NOTE Asagidaki dosyalara tiklayip indir." \
+          || gh release upload "$TAG" $FILES -R "$GITHUB_REPOSITORY" --clobber
           URL="https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG"
           echo "url=$URL" >> $GITHUB_OUTPUT
           {

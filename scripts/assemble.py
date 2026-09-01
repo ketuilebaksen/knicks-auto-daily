@@ -11,10 +11,11 @@ assemble.py — final video builder.
 
 Usage: python3 scripts/assemble.py content/current/script.json
 """
-import datetime, glob, json, os, random, re, subprocess, sys
+import datetime, glob, hashlib, json, os, random, re, subprocess, sys
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FPS = 24
+W_OUT, H_OUT = 1920, 1080
 FONT = os.path.join(BASE, "assets", "Anton-Regular.ttf")
 CUT_LEN = 2.8            # seconds per hook cut (fast)
 BODY_CUT = 3.4           # seconds per body cut (calmer, professional)
@@ -46,10 +47,49 @@ try:
     PHOTO_ZOOM = float(CH.get("photo_zoom", 0.08))
     BRAND = CH.get("name", "NY KNICKS DAILY")
     PALETTE = CH.get("palette", {})
+    STOCK_SHARE_CH = CH.get("stock_share", None)
+    _CH_GET = CH.get
 except Exception as _e:
     print(f"[assemble] channel config default ({_e})")
     OVERLAY_EVERY, CLIP_OFFSET, BOUNCE, PHOTO_ZOOM = 25.0, 37, True, 0.08
-    BRAND, PALETTE = "NY KNICKS DAILY", {}
+    BRAND, PALETTE, STOCK_SHARE_CH = "NY KNICKS DAILY", {}, None
+    _CH_GET = lambda k, d=None: d
+
+
+def _cfg(key, default, cast=float):
+    """channel.json value, overridable by an environment variable."""
+    env = os.environ.get(key.upper())
+    if env not in (None, ""):
+        return cast(env)
+    return cast(_CH_GET(key, default))
+
+
+# ---------------------------------------------------------------------------
+# PHOTO-LED EDITING
+#
+# The default edit cuts stock footage all the way through. A photo-led channel
+# inverts that: footage is a scarce opening resource and the body is carried by
+# still images, each given its own slow push or pull so it never reads as a
+# slideshow. The knobs below are what separate the two.
+#
+#   photo_first        turn the photo-led edit on
+#   broll_pool         how many DIFFERENT stock clips the video may draw
+#   broll_budget       hard cap on stock cuts, opener included (0 = no cap)
+#   broll_window_sec   after this many seconds, no more stock footage at all
+#   mix_window_sec     the opening stretch that alternates footage and stills
+#   motion_rate        how often a motion-graphics plate replaces a still
+#   collage_every_sec  minimum gap between two cut-out text cards
+# ---------------------------------------------------------------------------
+PHOTO_FIRST = str(_cfg("photo_first", 0, lambda v: v)).lower() in (
+    "1", "true", "yes", "on")
+BROLL_BUDGET = int(_cfg("broll_budget", 0))
+BROLL_WINDOW = _cfg("broll_window_sec", 0.0)
+MIX_WINDOW = _cfg("mix_window_sec", 60.0)
+MOTION_RATE = _cfg("motion_rate", 0.0)
+BROLL_POOL = int(_cfg("broll_pool", 0))
+COLLAGE_EVERY = _cfg("collage_every_sec", 22.0)
+COLLAGE_ON = str(_cfg("collage", 1 if PHOTO_FIRST else 0,
+                      lambda v: v)).lower() in ("1", "true", "yes", "on")
 
 # How long the Vox-style opener runs before the hook falls back to fast cuts.
 HOOK_MAX = float(os.environ.get("HOOK_MAX", "9"))
@@ -65,6 +105,12 @@ AMBIENT_UNDER = float(os.environ.get("AMBIENT_UNDER", "26"))  # dB below voice
 # The opener opens on footage rather than on a photo. Set OPENER_FOOTAGE=0 to
 # go back to the 2.5D still.
 OPENER_FOOTAGE = os.environ.get("OPENER_FOOTAGE", "1") != "0"
+
+# How much of the body is real stock footage. The rest is filled from the
+# motion-graphics library and player photos. 1.0 = the old all-footage edit.
+STOCK_SHARE = float(os.environ.get("STOCK_SHARE",
+                                   STOCK_SHARE_CH if STOCK_SHARE_CH is not None
+                                   else "1.0"))
 
 # The branded opener runs silent, so the video starts with a few seconds of
 # nobody talking. Set INTRO=0 and the video opens on the first spoken word.
@@ -100,6 +146,24 @@ def esc(text, maxlen=40):
     t = re.sub(r"\s+", " ", t).strip()
     return t.upper()[:maxlen].strip()
 
+def video_seed(script, tm, nparas):
+    """A shuffle seed that belongs to THIS video, not to today.
+
+    The seed used to be the date, which was fine while there was one video a
+    day. Rendering five in a morning meant five identical draws: same photos in
+    the same places, same clips in the same order. Deriving it from the
+    script instead gives every video its own arrangement, while a re-render of
+    the same script still reproduces exactly (so cached segments stay valid).
+    """
+    key = "|".join([
+        str(script.get("title", "")),
+        str(nparas),
+        f"{float(tm.get('total', 0)):.2f}",
+        "".join(str(s.get("heading", "")) for s in script.get("sections", [])),
+    ])
+    return int(hashlib.sha1(key.encode("utf-8", "ignore")).hexdigest()[:12], 16)
+
+
 def media_lib(sub, exts):
     files = []
     for e in exts:
@@ -116,9 +180,20 @@ class Broll:
             if d >= 3.0:
                 self.clips.append((f, d))
         self.rng.shuffle(self.clips)
-        # start each day at a different point so consecutive videos don't
-        # reuse the same clips in the same spots
-        self.i = (datetime.date.today().toordinal() * CLIP_OFFSET) % max(1, len(self.clips))
+        # A photo-led channel draws only a handful of clips from the depot and
+        # lives off them: the same nine shots, re-framed and re-cut. Trimming
+        # the deck here rather than counting cuts later is what makes that
+        # true everywhere — opener, hook and body all draw from the same nine.
+        if BROLL_POOL > 0 and len(self.clips) > BROLL_POOL:
+            keep = self.rng.randrange(len(self.clips))
+            rot = self.clips[keep:] + self.clips[:keep]
+            self.clips = rot[:BROLL_POOL]
+            print(f"[assemble] stok havuzu {BROLL_POOL} klibe indirildi "
+                  f"({len(rot)} klipten)")
+        # Every video starts the deck at its own point. This used to be keyed
+        # to the date, so five videos rendered in one morning opened on the
+        # same clip in the same order.
+        self.i = self.rng.randrange(max(1, len(self.clips)))
         self.recent = []
         self.cooldown = int(os.environ.get("BROLL_COOLDOWN", "8"))
         print(f"[assemble] b-roll: {len(self.clips)} clips (offset {self.i})")
@@ -149,6 +224,34 @@ class Broll:
         if not self.recent:
             return None
         return self.clips[self.recent[-1]]
+
+class MotionLib:
+    """The pre-rendered motion-graphics plates, picked like stock footage."""
+
+    def __init__(self, rng):
+        self.rng = rng
+        self.clips = []
+        for f in media_lib("motion", ("*.mp4", "*.MP4")):
+            d = ffdur(f)
+            if d >= 2.5:
+                self.clips.append((f, d))
+        self.rng.shuffle(self.clips)
+        self.recent = []
+        if self.clips:
+            print(f"[assemble] motion library: {len(self.clips)} plates")
+
+    def any(self):
+        return len(self.clips) > 0
+
+    def pick(self, need):
+        n = len(self.clips)
+        cool = min(6, n - 1) if n > 2 else 0
+        fresh = [k for k in range(n) if k not in self.recent[-cool:]] if cool else list(range(n))
+        k = self.rng.choice(fresh) if fresh else self.rng.randrange(n)
+        f, d = self.clips[k]
+        self.recent.append(k)
+        return f, self.rng.uniform(0, max(0.0, d - need - 0.2))
+
 
 def broll_cut(src, start, dur, out, caption=None, big_word=None, flash=True,
               zoom=1.0, slow=1.0):
@@ -199,10 +302,155 @@ def broll_cut(src, start, dur, out, caption=None, big_word=None, flash=True,
               f"— rendering this cut without it", flush=True)
         _encode(vf[:n_plain])
 
-def photo_segment(img, dur, out, caption=None):
+def motion_cut(src, start, dur, out, caption=None, big_word=None):
+    """One cut from the motion-graphics library.
+
+    These plates were rendered once and are reused forever, so this is just a
+    trim plus whatever text belongs on top — the same cost as a stock cut.
+    The plate is deliberately calm in the middle, which is where the type sits.
+    """
+    vf = [f"scale={W_OUT}:{H_OUT}:force_original_aspect_ratio=increase:flags=lanczos",
+          f"crop={W_OUT}:{H_OUT}", f"fps={FPS}"]
+    n_plain = len(vf)
+    if big_word:
+        vf.append(
+            f"drawtext=fontfile='{FONT}':text='{esc(big_word, 26)}':"
+            f"fontsize=128:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:"
+            f"borderw=7:bordercolor=black@0.85:alpha='min(1,max(0,(t-0.15)/0.35))'")
+    elif caption:
+        vf.append(
+            f"drawtext=fontfile='{FONT}':text='{esc(caption)}':"
+            f"fontsize=70:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:"
+            f"borderw=6:bordercolor=black@0.85:alpha='min(1,max(0,(t-0.15)/0.35))'")
+
+    def _encode(filters):
+        run(["ffmpeg", "-y", "-v", "error", "-ss", f"{start:.2f}",
+             "-t", f"{dur:.3f}", "-i", src,
+             "-t", f"{dur:.3f}", "-vf", ",".join(filters), "-r", str(FPS),
+             "-c:v", "libx264", "-preset", PRESET, "-crf", CRF_CUT,
+             "-pix_fmt", "yuv420p", "-an", out])
+    try:
+        _encode(vf)
+    except subprocess.CalledProcessError:
+        print(f"[assemble] motion text failed on {os.path.basename(src)}",
+              flush=True)
+        _encode(vf[:n_plain])
+
+
+class PhotoPool:
+    """Every photo in the library, dealt out like a shuffled deck.
+
+    Not random: random repeats. The deck is walked start to finish before it
+    is reshuffled, so in a video with more cuts than photos each picture is
+    used the same number of times, and two neighbouring cuts are never the
+    same shot. It also alternates the ken-burns direction, because a whole
+    video of pushes in reads as a slideshow — the pull-outs are what make it
+    feel cut rather than assembled.
+    """
+
+    def __init__(self, rng, photos):
+        self.rng = rng
+        self.deck = list(photos)
+        self.rng.shuffle(self.deck)
+        self.i = 0
+        self.n = 0
+
+    def any(self):
+        return len(self.deck) > 0
+
+    def pick(self):
+        if not self.deck:
+            return None, False
+        if self.i >= len(self.deck):
+            self.rng.shuffle(self.deck)
+            self.i = 0
+        p = self.deck[self.i]
+        self.i += 1
+        self.n += 1
+        return p, (self.n % 2 == 0)      # every other still pulls back out
+
+
+def choose_visual(t, k, rng, broll, motion, pool, budget):
+    """What this cut is made of: "stock", "photo" or "motion".
+
+    On a normal channel the answer is always stock footage. On a photo-led one
+    the footage is rationed twice over — a hard budget for the whole video and
+    a window of seconds past which it is simply unavailable — because the point
+    is not "less footage", it is "footage at the top, stills after".
+
+    Inside the opening window the two alternate rather than being drawn at
+    random. Alternating locks the change of texture to the cut, and the cuts
+    are already sitting on the speaker's phrasing, so the picture changes
+    character exactly where the voice does.
+    """
+    if not PHOTO_FIRST:
+        if motion.any() and rng.random() >= STOCK_SHARE:
+            return "motion"
+        return "stock" if broll.any() else ("photo" if pool.any() else "stock")
+
+    stock_ok = (broll.any()
+                and (BROLL_BUDGET <= 0 or budget[0] > 0)
+                and (BROLL_WINDOW <= 0 or t < BROLL_WINDOW))
+
+    if stock_ok and t < MIX_WINDOW:
+        # the synced opening minute: footage, still, footage, still
+        if k % 2 == 0:
+            return "stock"
+    elif stock_ok and rng.random() < 0.30:
+        # past the first minute footage becomes an accent, not the material
+        return "stock"
+
+    if motion.any() and rng.random() < MOTION_RATE:
+        return "motion"
+    if pool.any():
+        return "photo"
+    return "stock" if broll.any() else "photo"
+
+
+def build_collage(para, sec, idx, k, dur, seg_dir):
+    """A cut-out text card for this paragraph, or (None, None) if it has none.
+
+    The words come from the same place the info cards get theirs, so the card
+    says something the narration is actually about — a card that just repeats
+    the sentence under it is what made the earlier page treatment feel empty.
+    """
+    lines = [str(x).strip() for x in (para.get("card_lines") or []) if str(x).strip()]
+    title = str(para.get("card_title") or "").strip()
+    words = ([title] if title else []) + lines
+    words = [w for w in words if w][:3]
+    if not words:
+        return None, None
+    try:
+        import collage as CL
+        png = os.path.join(seg_dir, f"col_{idx:04d}_{k}.png")
+        accent = tuple(PALETTE.get("primary", (245, 132, 38)))
+        CL.card(words, png, FONT, accent=accent, seed=idx * 13 + k)
+        return png, min(dur, max(1.9, dur * 0.62))
+    except Exception as e:
+        print(f"[assemble] collage skipped ({e})", flush=True)
+        return None, None
+
+
+def photo_segment(img, dur, out, caption=None, zoom_out=False, drift=None,
+                  collage_png=None, collage_hold=None):
     frames = max(2, round(dur * FPS))
-    # slow, professional ken-burns: 1.00 -> 1.08 across the whole segment
-    z = f"min(1+{PHOTO_ZOOM}*on/{frames},{1 + PHOTO_ZOOM})"
+    # slow, professional ken-burns: 1.00 -> 1.08 across the whole segment,
+    # or the same move run backwards when this still is a pull-out
+    if zoom_out:
+        z = f"max({1 + PHOTO_ZOOM}-{PHOTO_ZOOM}*on/{frames},1.0)"
+    else:
+        z = f"min(1+{PHOTO_ZOOM}*on/{frames},{1 + PHOTO_ZOOM})"
+    # A panoramic photo (a stadium shot, say) scaled to 2400 wide comes out far
+    # shorter than 1350, and cropping to a size larger than the frame is an
+    # ffmpeg error, not a no-op — one such photo used to kill the whole render.
+    # force_original_aspect_ratio=increase guarantees both sides reach the
+    # target first, so the crop always has something to cut from.
+    # A pure zoom with the frame pinned dead centre still feels locked off.
+    # Letting the centre travel a little across the move is what turns it into
+    # a camera. The number is in source pixels, so it stays small on screen.
+    dx, dy = drift if drift else (0, 0)
+    xexp = f"iw/2-(iw/zoom/2)+{dx}*on/{frames}"
+    yexp = f"ih/2-(ih/zoom/2)+{dy}*on/{frames}"
     # A panoramic photo (a stadium shot, say) scaled to 2400 wide comes out far
     # shorter than 1350, and cropping to a size larger than the frame is an
     # ffmpeg error, not a no-op — one such photo used to kill the whole render.
@@ -210,7 +458,7 @@ def photo_segment(img, dur, out, caption=None):
     # target first, so the crop always has something to cut from.
     plain = (f"scale=2400:1350:force_original_aspect_ratio=increase:"
              f"flags=lanczos+accurate_rnd,crop=2400:1350,"
-             f"zoompan=z='{z}':d={frames}:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+             f"zoompan=z='{z}':d={frames}:x='{xexp}':y='{yexp}'"
              f":s=1920x1080:fps={FPS},format=yuv420p")
     vf = plain
     if caption:
@@ -219,17 +467,30 @@ def photo_segment(img, dur, out, caption=None):
                f"borderw=5:bordercolor=black@0.9:"
                f"shadowx=3:shadowy=3:shadowcolor=black@0.5")
 
-    def _encode(filters):
-        run(["ffmpeg", "-y", "-v", "error", "-loop", "1", "-i", img,
-             "-vf", filters, "-t", f"{dur:.3f}", "-r", str(FPS),
-             "-c:v", "libx264", "-preset", PRESET, "-crf", CRF_PHOTO,
-             "-pix_fmt", "yuv420p", "-an", out])
+    def _encode(filters, with_collage):
+        cmd = ["ffmpeg", "-y", "-v", "error", "-loop", "1", "-i", img]
+        if with_collage:
+            import collage as CL
+            f = CL.overlay_filter(dur, hold=collage_hold)
+            cmd += ["-loop", "1", "-i", collage_png,
+                    "-filter_complex",
+                    f"[0:v]{filters}[bg];[1:v]{f['prep']}[ov];"
+                    f"[bg][ov]overlay={f['xy']}:{f['enable']}[v]",
+                    "-map", "[v]"]
+        else:
+            cmd += ["-vf", filters]
+        cmd += ["-t", f"{dur:.3f}", "-r", str(FPS),
+                "-c:v", "libx264", "-preset", PRESET, "-crf", CRF_PHOTO,
+                "-pix_fmt", "yuv420p", "-an", out]
+        run(cmd)
+
     try:
-        _encode(vf)
+        _encode(vf, bool(collage_png))
     except subprocess.CalledProcessError:
-        print(f"[assemble] caption failed on {os.path.basename(img)} "
+        # the picture is the point; the words on it are not worth losing it
+        print(f"[assemble] photo text failed on {os.path.basename(img)} "
               f"— rendering the photo without it", flush=True)
-        _encode(plain)
+        _encode(plain, False)
 
 def card_segment(card, dur, idx, out, overlay=None):
     frames = max(2, round(dur * FPS))
@@ -378,7 +639,7 @@ def make_outro(seg_dir):
              "-crf", "19", "-an", p])
     return [p], 7.0
 
-def build_opener(out, dur, photos, broll, script, seg_dir):
+def build_opener(out, dur, photos, broll, script, seg_dir, budget=None):
     """The first seconds: a 2.5D shot with headline pages flying across it.
 
     Built in two stages so each can fail on its own. The moving shot comes
@@ -400,6 +661,8 @@ def build_opener(out, dur, photos, broll, script, seg_dir):
         for k in range(n):
             p = os.path.join(seg_dir, f"hook_base_{k}.mp4")
             src, start = broll.pick(cd)
+            if budget is not None:
+                budget[0] -= 1
             broll_cut(src, start, cd, p, zoom=1.0 if k % 2 else 1.18)
             parts.append(p)
         lst = os.path.join(seg_dir, "hook_base.txt")
@@ -447,6 +710,8 @@ def build_opener(out, dur, photos, broll, script, seg_dir):
         for k in range(n):
             p = os.path.join(seg_dir, f"hook_base_{k}.mp4")
             src, start = broll.pick(cd)
+            if budget is not None:
+                budget[0] -= 1
             broll_cut(src, start, cd, p)
             parts.append(p)
         lst = os.path.join(seg_dir, "hook_base.txt")
@@ -479,8 +744,11 @@ def main():
         for para in sec["paragraphs"]:
             paras.append((si, sec, para))
 
-    rng = random.Random(datetime.date.today().toordinal() * 6151 + len(paras))
+    seed = video_seed(script, tm, len(paras))
+    rng = random.Random(seed)
+    print(f"[assemble] bu videonun karisim tohumu: {seed % 100000}")
     broll = Broll(rng)
+    motion = MotionLib(rng)
     global RHYTHM
     try:
         import rhythm as RH
@@ -489,9 +757,18 @@ def main():
         print(f"[assemble] rhythm unavailable ({e})")
         RHYTHM = None
     slow_state = [-999.0]
+    collage_state = [-999.0]
+    mix_tally = {"motion": 0, "stock": 0, "photo": 0, "collage": 0}
     photos = media_lib("photos", ("*.jpg", "*.jpeg", "*.png", "*.webp"))
     pmap = photo_lookup(photos)
+    pool = PhotoPool(rng, photos)
+    # The stock budget covers the WHOLE video, opener included, so the opener
+    # is charged for what it spends before the body gets to see what is left.
+    budget = [BROLL_BUDGET if BROLL_BUDGET > 0 else 10 ** 6]
     print(f"[assemble] photo library: {len(photos)} ({list(pmap)[:6]}...)")
+    if PHOTO_FIRST:
+        print(f"[assemble] foto agirlikli kurgu: stok butcesi {BROLL_BUDGET}, "
+              f"ilk {BROLL_WINDOW:.0f} sn icinde, karisik acilis {MIX_WINDOW:.0f} sn")
     seg_dir = os.path.join(BASE, "work", "segs")
     os.makedirs(seg_dir, exist_ok=True)
 
@@ -536,7 +813,7 @@ def main():
                     op = os.path.join(seg_dir, "hook_open.mp4")
                     if fresh or not (os.path.exists(op) and
                                      os.path.getsize(op) > 5000):
-                        build_opener(op, od, photos, broll, script, seg_dir)
+                        build_opener(op, od, photos, broll, script, seg_dir, budget)
                     parts.append(f"file '{op}'")
                     remaining = max(0.0, dur - od)
                 except Exception as e:
@@ -549,13 +826,27 @@ def main():
             for k in range(cuts):
                 part = os.path.join(seg_dir, f"h_{i:04d}_{k}.mp4")
                 if fresh:
-                    src, start = broll.pick(cut_d)
                     big = None
                     if cuts >= 3 and k == cuts // 2 and para.get("card_lines"):
                         big = para["card_lines"][0]
-                    broll_cut(src, start, cut_d, part,
-                              caption=para.get("card_title") if k == 0 else None,
-                              big_word=big)
+                    cap0 = para.get("card_title") if k == 0 else None
+                    # even the hook alternates once the channel is photo-led:
+                    # it is the busiest part of the video and the change of
+                    # texture is what keeps it from reading as one long clip
+                    if PHOTO_FIRST and pool.any() and k % 2 == 1:
+                        mix_tally["photo"] += 1
+                        img, zoom_out = pool.pick()
+                        sgn = -1 if zoom_out else 1
+                        photo_segment(img, cut_d, part, caption=cap0,
+                                      zoom_out=zoom_out,
+                                      drift=(sgn * rng.randint(40, 90),
+                                             sgn * rng.randint(-45, 45)))
+                    else:
+                        mix_tally["stock"] += 1
+                        budget[0] -= 1
+                        src, start = broll.pick(cut_d)
+                        broll_cut(src, start, cut_d, part,
+                                  caption=cap0, big_word=big)
                 parts.append(f"file '{part}'")
             if fresh:
                 lst = os.path.join(seg_dir, f"h_{i:04d}.txt")
@@ -564,8 +855,10 @@ def main():
                 run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0",
                      "-i", lst, "-c", "copy", seg])
         else:
-            # FOOTAGE-ONLY body: player photo insert (if named) + calm b-roll cuts
-            if fresh and broll.any():
+            # Body: a named player's photo up front, then the cut sequence.
+            # A photo-led channel can carry this with no footage at all, so the
+            # gate is "do we have ANY pictures", not "do we have clips".
+            if fresh and (broll.any() or pool.any()):
                 parts = []
                 remaining = dur
                 ptext = (str(para.get("text", "")) + " " +
@@ -615,8 +908,61 @@ def main():
                     ncuts = max(1, round(remaining / BODY_CUT))
                     lens = [remaining / ncuts] * ncuts
 
+                cut_t = seg_t0
                 for k, cd in enumerate(lens):
                     bp = os.path.join(seg_dir, f"b_{i:04d}_{k}.mp4")
+                    here, cut_t = cut_t, cut_t + cd
+
+                    kind = choose_visual(here, k, rng, broll, motion, pool,
+                                         budget)
+
+                    if kind == "motion":
+                        mix_tally["motion"] += 1
+                        msrc, mstart = motion.pick(cd)
+                        word = None
+                        cap2 = None
+                        if k == 0 and para.get("card_lines"):
+                            word = para["card_lines"][0]
+                        elif k == 0 and cap:
+                            cap2 = cap
+                        motion_cut(msrc, mstart, cd, bp,
+                                   caption=cap2, big_word=word)
+                        parts.append(bp)
+                        continue
+
+                    if kind == "photo":
+                        mix_tally["photo"] += 1
+                        img, zoom_out = pool.pick()
+                        # the drift direction follows the zoom, so a push and
+                        # the pull that follows it do not travel the same way
+                        sgn = -1 if zoom_out else 1
+                        drift = (sgn * rng.randint(40, 90),
+                                 sgn * rng.randint(-45, 45))
+                        cpng, chold = None, None
+                        if (COLLAGE_ON and cd >= 2.4
+                                and here - collage_state[0] >= COLLAGE_EVERY):
+                            cpng, chold = build_collage(para, sec, i, k, cd,
+                                                        seg_dir)
+                            if cpng:
+                                collage_state[0] = here
+                                mix_tally["collage"] += 1
+                        try:
+                            photo_segment(img, cd, bp,
+                                          caption=(cap if (k == 0 and not photo
+                                                           and not cpng) else None),
+                                          zoom_out=zoom_out, drift=drift,
+                                          collage_png=cpng, collage_hold=chold)
+                            parts.append(bp)
+                            continue
+                        except Exception as e:
+                            # a broken image gives its time back to the footage
+                            print(f"[assemble] still skipped "
+                                  f"({os.path.basename(img)}: {e})", flush=True)
+                            if not broll.any():
+                                raise
+
+                    mix_tally["stock"] += 1
+                    budget[0] -= 1
                     zoom, slow = 1.0, 1.0
                     prev = broll.last()
 
@@ -750,6 +1096,15 @@ def main():
          "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
          "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
          "-movflags", "+faststart", "-shortest", final])
+    tot = sum(mix_tally[k] for k in ("motion", "stock", "photo"))
+    if tot:
+        print(f"[assemble] kurgu karisimi: {mix_tally['stock']} stok video / "
+              f"{mix_tally['photo']} fotograf / "
+              f"{mix_tally['motion']} hareketli grafik  "
+              f"(stok %{100 * mix_tally['stock'] / tot:.0f})  "
+              f"{mix_tally['collage']} kolaj yazi")
+        if PHOTO_FIRST:
+            print(f"[assemble] farkli stok klip kullanildi: {len(broll.clips)}")
     print(f"[assemble] DONE -> work/final.mp4 ({ffdur(final)/60:.1f} min)")
 
 if __name__ == "__main__":

@@ -5,5 +5,11 @@
   "clip_offset": 37,
   "thumb_engine": "none",
   "tts_engine": "eleven",
-  "eleven_voice_id": "S9UjcNYIwfBOtZiDnIQT"
+  "eleven_voice_id": "S9UjcNYIwfBOtZiDnIQT",
+  "photo_first": true,
+  "broll_pool": 9,
+  "broll_window_sec": 120,
+  "mix_window_sec": 60,
+  "motion_rate": 0.12,
+  "collage_every_sec": 22
 }

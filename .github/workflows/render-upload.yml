@@ -71,6 +71,10 @@ jobs:
         run: |
           mkdir -p work/broll work/music work/photos work/ambient
           gh release download broll -R "$MEDIA_REPO" -D work/broll || echo "no b-roll release"
+          # SADECE bu kanala ait stok videolar. Ayri bir etikette durdugu
+          # icin baska hicbir kanal bunu indirmiyor; NBA Tunnel gibi bu
+          # depodan beslenen kanallar sadece "broll" etiketini goruyor.
+          gh release download broll-knicks -R "$GITHUB_REPOSITORY" -D work/broll || echo "knicks-only broll yok"
           gh release download music -R "$MUSIC_REPO" -D work/music || echo "no music release"
           gh release download photos -R "$MEDIA_REPO" -D work/photos || echo "no photos release"
           # stadyum ugultusu / ortam sesi — opsiyonel, yoksa video sessiz zeminde kalir

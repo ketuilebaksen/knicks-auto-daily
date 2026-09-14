@@ -7,9 +7,27 @@
   "tts_engine": "eleven",
   "eleven_voice_id": "S9UjcNYIwfBOtZiDnIQT",
   "photo_first": true,
-  "broll_pool": 9,
-  "broll_window_sec": 120,
-  "mix_window_sec": 60,
+  "broll_pool": 0,
+  "broll_window_sec": 0,
+  "mix_window_sec": 36000,
   "motion_rate": 0.12,
-  "collage_every_sec": 22
+  "collage_every_sec": 22,
+  "roster": [
+    "Jalen Brunson",
+    "Karl-Anthony Towns",
+    "OG Anunoby",
+    "Mikal Bridges",
+    "Josh Hart",
+    "Miles McBride",
+    "Andre Drummond",
+    "Jordan Clarkson",
+    "Landry Shamet",
+    "Jose Alvarado",
+    "Tyler Kolek",
+    "Pacome Dadiet",
+    "Mohamed Diawara",
+    "Mike Brown",
+    "Leon Rose",
+    "James Dolan"
+  ]
 }

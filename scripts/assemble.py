@@ -370,7 +370,7 @@ class PhotoPool:
         return p, (self.n % 2 == 0)      # every other still pulls back out
 
 
-def choose_visual(t, k, rng, broll, motion, pool, budget):
+def choose_visual(t, k, rng, broll, motion, pool, budget, flip=None):
     """What this cut is made of: "stock", "photo" or "motion".
 
     On a normal channel the answer is always stock footage. On a photo-led one
@@ -393,8 +393,16 @@ def choose_visual(t, k, rng, broll, motion, pool, budget):
                 and (BROLL_WINDOW <= 0 or t < BROLL_WINDOW))
 
     if stock_ok and t < MIX_WINDOW:
-        # the synced opening minute: footage, still, footage, still
-        if k % 2 == 0:
+        # Footage, still, footage, still. The counter runs across the WHOLE
+        # video rather than restarting at each paragraph: restarting meant the
+        # first cut of every paragraph was footage, which quietly pushed the
+        # real split to 56/44 instead of the half-and-half it looked like.
+        if flip is None:
+            turn = k
+        else:
+            turn = flip[0]
+            flip[0] += 1
+        if turn % 2 == 0:
             return "stock"
     elif stock_ok and rng.random() < 0.30:
         # past the first minute footage becomes an accent, not the material
@@ -758,6 +766,7 @@ def main():
         RHYTHM = None
     slow_state = [-999.0]
     collage_state = [-999.0]
+    flip = [0]          # video/foto sirasi, tum video boyunca sayar
     mix_tally = {"motion": 0, "stock": 0, "photo": 0, "collage": 0}
     photos = media_lib("photos", ("*.jpg", "*.jpeg", "*.png", "*.webp"))
     pmap = photo_lookup(photos)
@@ -914,7 +923,7 @@ def main():
                     here, cut_t = cut_t, cut_t + cd
 
                     kind = choose_visual(here, k, rng, broll, motion, pool,
-                                         budget)
+                                         budget, flip)
 
                     if kind == "motion":
                         mix_tally["motion"] += 1

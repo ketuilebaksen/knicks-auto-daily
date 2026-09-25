@@ -70,7 +70,18 @@ jobs:
           MUSIC_REPO: ${{ vars.MUSIC_REPO || github.repository }}
         run: |
           mkdir -p work/broll work/music work/photos work/ambient
-          gh release download broll -R "$MEDIA_REPO" -D work/broll || echo "no b-roll release"
+          # b-roll birden fazla release'e bolunebiliyor: GitHub bir release'e en
+          # fazla 1000 dosya kabul ediyor. broll, broll2, broll3... etiketli
+          # olanlarin HEPSI indirilir; yeni stok eklemek icin bir sonraki
+          # numarayla release acmak yeterli, baska bir sey yapmaya gerek yok.
+          # Her etiket kendi alt klasorune iner, ayni adli dosyalar cakismaz
+          # (assemble.py work/broll'u alt klasorleriyle birlikte tarar).
+          broll_tags=$(gh release list -R "$MEDIA_REPO" --limit 1000 --json tagName -q '.[].tagName' | grep -E '^broll[0-9]*$' || true)
+          [ -n "$broll_tags" ] || broll_tags="broll"
+          for tag in $broll_tags; do
+            mkdir -p "work/broll/$tag"
+            gh release download "$tag" -R "$MEDIA_REPO" -D "work/broll/$tag" || echo "no $tag release"
+          done
           # SADECE bu kanala ait stok videolar. Ayri bir etikette durdugu
           # icin baska hicbir kanal bunu indirmiyor; NBA Tunnel gibi bu
           # depodan beslenen kanallar sadece "broll" etiketini goruyor.
